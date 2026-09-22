@@ -1,0 +1,45 @@
+meta {
+  name: LATRA authenticated sample
+  type: http
+  seq: 2
+}
+
+post {
+  url: http://vts.latra.go.tz:8090/data-integration/integration/gps
+  body: json
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+  Authorization: Basic {{latra_basic_auth}}
+}
+
+body:json {
+  {
+    "vehicle_reg_no": "BRUNO-TEST",
+    "type": "poi",
+    "imei": "000000000000000",
+    "items": [
+      {
+        "latitude": "-6.7924",
+        "longitude": "39.2083",
+        "altitude": "0",
+        "timestamp": "{{$timestamp}}",
+        "horizontal_speed": "0",
+        "vertical_speed": "0",
+        "bearing": "0",
+        "satellite_count": "0",
+        "HDOP": "0",
+        "d2d3": "0",
+        "RSSI": "0",
+        "LAC": "0",
+        "Cell_ID": "0",
+        "MGS_ID": "{{$timestamp}}",
+        "MCC": "0",
+        "activity_id": "1"
+      }
+    ]
+  }
+}
+​

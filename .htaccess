@@ -1,0 +1,21 @@
+# Deny access to hidden files (e.g. .env) and sensitive internals
+Options -Indexes
+
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
+
+# Never serve source/log/dump/secret files from the web
+<FilesMatch "\.(log|bru|sql|md|pdf|txt|env)$">
+    Require all denied
+</FilesMatch>
+
+# Block leftover debug/test/CLI-only entry points by name
+<FilesMatch "^(form|form2|_setup|setup|install|setup_admin|maintain)\.php$">
+    Require all denied
+</FilesMatch>
+
+# Block directory listings + dotfile traversal
+<IfModule mod_negotiation.c>
+    Options -MultiViews
+</IfModule>
