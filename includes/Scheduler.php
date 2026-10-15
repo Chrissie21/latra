@@ -62,7 +62,7 @@ class Scheduler {
 
         $jobs = Database::fetchAll(
             "SELECT * FROM jobs WHERE is_enabled = 1 AND (next_run_at IS NULL OR next_run_at <= NOW())
-             ORDER BY FIELD(job_key, 'reconcile','emergency_poll','flush_outbox','poll_messages','offline_sweep','fleet_sync','backup','retention','audit_rollup')"
+             ORDER BY FIELD(job_key, 'reconcile','emergency_poll','flush_outbox','poll_messages','offline_sweep','purge_delivered','fleet_sync','backup','retention','audit_rollup')"
         );
         foreach ($jobs as $job) {
             $key = $job['job_key'];
@@ -132,6 +132,7 @@ class Scheduler {
             'offline_sweep' => self::jobOffline(),
             'backup' => self::jobBackup(),
             'retention' => self::jobRetention(),
+            'purge_delivered' => self::purgeDelivered(),
             'audit_rollup' => self::jobRollup(),
             default => 0,
         };
@@ -433,6 +434,11 @@ class Scheduler {
         } catch (Throwable $e) {
             Logger::warn('retention.messages', ['error' => $e->getMessage()]);
         }
+
+        // Rows already accepted by LATRA are dead weight: drop them once they
+        // age out of the operational window so the hot tables stay small.
+        $moved += self::purgeDelivered();
+
         $logFiles = glob(LOGS_DIR . '/*.log') ?: [];
         foreach ($logFiles as $f) {
             if (filemtime($f) < time() - ($days * 86400)) {
@@ -440,6 +446,61 @@ class Scheduler {
             }
         }
         return $moved;
+    }
+
+    /**
+     * Delete everything LATRA has already confirmed, once it is older than
+     * `delivered_retention_hours` (default 24h).
+     *
+     * Deletion order matters: push_log and outbox reference message_log, so
+     * they go first (push_log.message_log_id is ON DELETE SET NULL, outbox
+     * cascades). Deletes are chunked with LIMIT so a single cycle never holds
+     * a long row lock on the live pipeline tables.
+     *
+     * @return int rows removed
+     */
+    public static function purgeDelivered(): int {
+        $hours = max(1, Schema::configInt('delivered_retention_hours', 24));
+        $total = 0;
+
+        $batches = [
+            // LATRA push receipts for accepted payloads.
+            "DELETE FROM push_log
+             WHERE response_status = '1'
+               AND created_at < NOW() - INTERVAL $hours HOUR
+             LIMIT 2000",
+            // Completed queue entries (payload already duplicated in push_log).
+            "DELETE FROM outbox
+             WHERE status = 'sent'
+               AND updated_at < NOW() - INTERVAL $hours HOUR
+             LIMIT 2000",
+            // Source messages that were pushed through successfully.
+            "DELETE FROM message_log
+             WHERE latra_status = 'sent'
+               AND pushed_at IS NOT NULL
+               AND pushed_at < NOW() - INTERVAL $hours HOUR
+             LIMIT 2000",
+        ];
+
+        foreach ($batches as $sql) {
+            try {
+                // Loop until a batch comes back empty (or we hit a safety cap).
+                for ($i = 0; $i < 50; $i++) {
+                    $deleted = Database::query($sql)->rowCount();
+                    if ($deleted <= 0) {
+                        break;
+                    }
+                    $total += $deleted;
+                }
+            } catch (Throwable $e) {
+                Logger::warn('retention.delivered', ['error' => $e->getMessage()]);
+            }
+        }
+
+        if ($total > 0) {
+            Logger::info('retention.delivered_purged', ['rows' => $total, 'hours' => $hours]);
+        }
+        return $total;
     }
 
     private static function jobRollup(): int {

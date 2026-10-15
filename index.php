@@ -3,7 +3,10 @@ require_once 'config.php';
 require_once 'includes/Database.php';
 require_once 'includes/Auth.php';
 require_once 'includes/Layout.php';
+require_once 'includes/DashboardCache.php';
 Auth::requireView('dashboard.view');
+
+$now = time();
 
 $now = time();
 
@@ -14,6 +17,12 @@ $activity = max(0, (int) ($_GET['activity'] ?? 0));
 if (!in_array($area, ['all', 'dar', 'up'], true))   $area = 'all';
 if (!in_array($status, ['all', 'online', 'offline'], true)) $status = 'all';
 
+$cacheKey = 'dash|' . $area . '|' . $status . '|' . (string)$activity;
+$cached = DashboardCache::get($cacheKey, 60);
+if ($cached !== null) {
+    extract($cached, EXTR_SKIP);
+} else {
+
 $vParts = [];
 if ($area === 'dar')  $vParts[] = 'lat BETWEEN -7.4000 AND -6.4000 AND lng BETWEEN 38.9000 AND 39.7000';
 if ($area === 'up')   $vParts[] = '(lat IS NULL OR lng IS NULL OR lat = 0 OR lng = 0 OR NOT (lat BETWEEN -7.4000 AND -6.4000 AND lng BETWEEN 38.9000 AND 39.7000))';
@@ -21,10 +30,23 @@ if ($status === 'online')  $vParts[] = 'last_message_time IS NOT NULL AND last_m
 if ($status === 'offline') $vParts[] = '(last_message_time IS NULL OR last_message_time <= ' . ($now - 86400) . ')';
 $vScope = $vParts ? implode(' AND ', $vParts) : '1=1';
 
+// Precompute vehicle scope IDs for heavy queries (avoid repeated IN (SELECT...))
+$vidRows = Database::fetchAll("SELECT id FROM vehicles WHERE $vScope");
+if (empty($vidRows)) {
+    $vidList = '(-1)';
+    $vidParams = [];
+} else {
+    $ids = array_column($vidRows, 'id');
+    $ph = implode(',', array_fill(0, count($ids), '?'));
+    $vidList = "($ph)";
+    $vidParams = $ids;
+}
+$scopeIn = static fn(string $and = '') => "$and vehicle_id IN $vidList";
+
 // Append the vehicle/activity scope to a WHERE clause already containing conditions.
 $scope = function (string $and, string $actTable = 'activity_id'): string {
-    global $vScope, $activity;
-    $s = "$and vehicle_id IN (SELECT id FROM vehicles WHERE $vScope)";
+    global $vidList, $activity;
+    $s = "$and vehicle_id IN $vidList";
     if ($activity > 0) $s .= " AND $actTable = $activity";
     return $s;
 };
@@ -50,39 +72,62 @@ function compactNum(int $n): string {
 }
 
 /** Today / This week / Older split for a table + condition. */
-function periodTotals(string $from, string $cond, string $dateCol = 'created_at'): array {
-    $q = fn(string $extra) => (int) (Database::fetch("SELECT COUNT(*) c FROM $from WHERE $cond $extra")['c'] ?? 0);
+function periodTotals(string $from, string $cond, string $dateCol = 'created_at', int $maxDays = 30, array $params = []): array {
+    $q = function(string $extra) use ($from, $cond, $dateCol, $params): int {
+        $sql = "SELECT COUNT(*) c FROM $from WHERE $cond $extra";
+        // Count placeholders in full SQL and in params
+        $phCount = substr_count($sql, '?');
+        $pCount = is_array($params) ? count($params) : 0;
+        if ($phCount > 0 && $pCount >= $phCount) {
+            // if more params passed than placeholders? or just pass first N? better pass exactly what matches
+            $execParams = array_slice($params, 0, $phCount);
+        } elseif ($phCount > 0 && $pCount > 0 && $pCount < $phCount) {
+            $execParams = $params;
+        } elseif ($phCount > 0 && $pCount == 0) {
+            // placeholders but no params provided - this can happen if we constructed badly; try to not pass
+            $execParams = $params;
+        } else {
+            $execParams = [];
+        }
+        if ($phCount == 0 || empty($execParams)) {
+            $row = Database::fetch($sql);
+        } else {
+            $row = Database::fetch($sql, $execParams);
+        }
+        return (int) ($row['c'] ?? 0);
+    };
     $week  = $q("AND $dateCol >= NOW() - INTERVAL 7 DAY");
     $today = $q("AND $dateCol >= CURDATE()");
-    $older = max(0, $q('') - $week);
+    $last30 = $q("AND $dateCol >= NOW() - INTERVAL $maxDays DAY");
+    $older = max(0, $last30 - $week);
     return [$today, $week, $older];
 }
 
 // -- Pipeline (message → LATRA processing → sent) -----------------
-[$openT, $openW, $openO]   = periodTotals('outbox', "status = 'pending'" . $scope(' AND'));
-$awaitUrg                   = (int) (Database::fetch("SELECT COUNT(*) c FROM outbox WHERE status = 'failed' AND created_at >= CURDATE()" . $scope(' AND'))['c'] ?? 0);
-[$awaitT, $awaitW, $awaitO] = periodTotals('outbox', "status = 'failed'" . $scope(' AND'));
-$readyUrg                   = (int) (Database::fetch("SELECT COUNT(*) c FROM outbox WHERE status = 'failed' AND failure_class = 'transient'" . $scope(' AND'))['c'] ?? 0);
-[$readyT, $readyW, $readyO] = periodTotals('message_log', "latra_status = 'pending'" . $scope(' AND'));
-$wipUrg                     = (int) (Database::fetch("SELECT COUNT(*) c FROM wialon_events WHERE status = 'pending'" . $scope(' AND'))['c'] ?? 0);
-[$wipT, $wipW, $wipO]       = periodTotals('wialon_events', '1 = 1' . $scope(' AND'));
-[$doneT, $doneW, $doneO]    = periodTotals('push_log', "response_status = '1'" . $scope(' AND'));
+[$openT, $openW, $openO]   = periodTotals('outbox', "status = 'pending'" . $scope(' AND'), 'created_at', 30, $vidParams);
+$awaitUrg                   = (int) (Database::fetch("SELECT COUNT(*) c FROM outbox WHERE status = 'failed' AND created_at >= CURDATE()" . $scope(' AND'), $vidParams)['c'] ?? 0);
+[$awaitT, $awaitW, $awaitO] = periodTotals('outbox', "status = 'failed'" . $scope(' AND'), 'created_at', 30, $vidParams);
+$readyUrg                   = (int) (Database::fetch("SELECT COUNT(*) c FROM outbox WHERE status = 'failed' AND failure_class = 'transient'" . $scope(' AND'), $vidParams)['c'] ?? 0);
+[$readyT, $readyW, $readyO] = periodTotals('message_log', "latra_status = 'pending'" . $scope(' AND'), 'created_at', 30, $vidParams);
+$wipUrg                     = (int) (Database::fetch("SELECT COUNT(*) c FROM wialon_events WHERE status = 'pending'" . $scope(' AND'), $vidParams)['c'] ?? 0);
+[$wipT, $wipW, $wipO]       = periodTotals('wialon_events', '1 = 1' . $scope(' AND'), 'created_at', 30, $vidParams);
+[$doneT, $doneW, $doneO]    = periodTotals('push_log', "response_status = '1'" . $scope(' AND'), 'created_at', 30, $vidParams);
 
 // -- Down equipment ------------------------------------------------
-$downToday = (int) (Database::fetch("SELECT COUNT(*) c FROM vehicles WHERE ($vScope) AND (last_message_time IS NULL OR last_message_time <= " . ($now - 86400) . ")")['c'] ?? 0);
-$downWeek  = (int) (Database::fetch("SELECT COUNT(*) c FROM vehicles WHERE ($vScope) AND (last_message_time IS NULL OR last_message_time <= " . ($now - 7 * 86400) . ")")['c'] ?? 0);
+$downToday = (int) (Database::fetch("SELECT COUNT(*) c FROM vehicles WHERE id IN $vidList AND (last_message_time IS NULL OR last_message_time <= " . ($now - 86400) . ")", $vidParams)['c'] ?? 0);
+$downWeek  = (int) (Database::fetch("SELECT COUNT(*) c FROM vehicles WHERE id IN $vidList AND (last_message_time IS NULL OR last_message_time <= " . ($now - 7 * 86400) . ")", $vidParams)['c'] ?? 0);
 
 // -- Presence totals (GPS connectivity: recency of last GPS fix) -----
 $gpsOnline = $now - 86400;
 $gpsWeek   = $now - 7 * 86400;
 
-$presOnline  = (int) (Database::fetch("SELECT COUNT(*) c FROM vehicles WHERE ($vScope) AND last_message_time IS NOT NULL AND last_message_time > $gpsOnline")['c'] ?? 0);
-$presOffline = (int) (Database::fetch("SELECT COUNT(*) c FROM vehicles WHERE ($vScope) AND (last_message_time IS NULL OR last_message_time <= $gpsOnline)")['c'] ?? 0);
+$presOnline  = (int) (Database::fetch("SELECT COUNT(*) c FROM vehicles WHERE id IN $vidList AND last_message_time IS NOT NULL AND last_message_time > $gpsOnline", $vidParams)['c'] ?? 0);
+$presOffline = (int) (Database::fetch("SELECT COUNT(*) c FROM vehicles WHERE id IN $vidList AND (last_message_time IS NULL OR last_message_time <= $gpsOnline)", $vidParams)['c'] ?? 0);
 
 // -- Locations (GPS connectivity, split at 7 days) -------------------
-$locUnits  = (int) (Database::fetch("SELECT COUNT(*) c FROM vehicles WHERE lat IS NOT NULL AND lng IS NOT NULL AND lat <> 0 AND ($vScope)")['c'] ?? 0);
+$locUnits  = (int) (Database::fetch("SELECT COUNT(*) c FROM vehicles WHERE lat IS NOT NULL AND lng IS NOT NULL AND lat <> 0 AND id IN $vidList", $vidParams)['c'] ?? 0);
 $locOk     = $presOnline;
-$locOpen   = (int) (Database::fetch("SELECT COUNT(*) c FROM vehicles WHERE ($vScope) AND last_message_time IS NOT NULL AND last_message_time <= $gpsOnline AND last_message_time > $gpsWeek")['c'] ?? 0);
+$locOpen   = (int) (Database::fetch("SELECT COUNT(*) c FROM vehicles WHERE id IN $vidList AND last_message_time IS NOT NULL AND last_message_time <= $gpsOnline AND last_message_time > $gpsWeek", $vidParams)['c'] ?? 0);
 $locDown   = $presOffline - $locOpen;
 
 // -- Feed -----------------------------------------------------------
@@ -91,22 +136,22 @@ $eventsFeed = Database::fetchAll("SELECT e.id, e.status, e.created_at, e.activit
     FROM wialon_events e
     LEFT JOIN vehicles v ON e.vehicle_id = v.id
     LEFT JOIN activity_definitions ad ON e.activity_id = ad.id
-    WHERE e.vehicle_id IN (SELECT id FROM vehicles WHERE $vScope)" . ($activity > 0 ? " AND e.activity_id = $activity" : '') . "
-    ORDER BY e.created_at DESC LIMIT 8");
+    WHERE e.vehicle_id IN $vidList" . ($activity > 0 ? " AND e.activity_id = $activity" : '') . "
+    ORDER BY e.created_at DESC LIMIT 8", $vidParams);
 $sentFeed   = Database::fetchAll("SELECT pl.id, pl.created_at, pl.response_status, pl.latency_ms, pl.attempt,
         v.vehicle_reg_no, v.name, ad.activity_name
     FROM push_log pl
     LEFT JOIN vehicles v ON pl.vehicle_id = v.id
     LEFT JOIN activity_definitions ad ON pl.activity_id = ad.id
-    WHERE pl.response_status = '1' AND pl.vehicle_id IN (SELECT id FROM vehicles WHERE $vScope)" . ($activity > 0 ? " AND pl.activity_id = $activity" : '') . "
-    ORDER BY pl.created_at DESC LIMIT 8");
+    WHERE pl.response_status = '1' AND pl.vehicle_id IN $vidList" . ($activity > 0 ? " AND pl.activity_id = $activity" : '') . "
+    ORDER BY pl.created_at DESC LIMIT 8", $vidParams);
 $failFeed   = Database::fetchAll("SELECT pl.id, pl.created_at, pl.response_status, pl.latency_ms, pl.attempt,
         v.vehicle_reg_no, v.name, ad.activity_name
     FROM push_log pl
     LEFT JOIN vehicles v ON pl.vehicle_id = v.id
     LEFT JOIN activity_definitions ad ON pl.activity_id = ad.id
-    WHERE pl.response_status IS NOT NULL AND pl.response_status <> '1' AND pl.vehicle_id IN (SELECT id FROM vehicles WHERE $vScope)" . ($activity > 0 ? " AND pl.activity_id = $activity" : '') . "
-    ORDER BY pl.created_at DESC LIMIT 8");
+    WHERE pl.response_status IS NOT NULL AND pl.response_status <> '1' AND pl.vehicle_id IN $vidList" . ($activity > 0 ? " AND pl.activity_id = $activity" : '') . "
+    ORDER BY pl.created_at DESC LIMIT 8", $vidParams);
 
 $mapUnits = Database::fetchAll("SELECT id, vehicle_reg_no, name, lat, lng, speed, last_message_time, satellite_count, bearing
     FROM vehicles
@@ -350,4 +395,20 @@ Layout::renderHead('Dashboard', true);
 window.__fleetMapUnits = <?= json_encode($mapUnits, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
 </script>
 
-<?php Layout::renderFoot(); ?>
+<?php 
+    $cachePayload = [
+        'openT' => $openT, 'openW' => $openW, 'openO' => $openO,
+        'awaitUrg' => $awaitUrg, 'awaitT' => $awaitT, 'awaitW' => $awaitW, 'awaitO' => $awaitO,
+        'readyUrg' => $readyUrg, 'readyT' => $readyT, 'readyW' => $readyW, 'readyO' => $readyO,
+        'wipUrg' => $wipUrg, 'wipT' => $wipT, 'wipW' => $wipW, 'wipO' => $wipO,
+        'doneT' => $doneT, 'doneW' => $doneW, 'doneO' => $doneO,
+        'downToday' => $downToday, 'downWeek' => $downWeek,
+        'presOnline' => $presOnline, 'presOffline' => $presOffline,
+        'locUnits' => $locUnits, 'locOk' => $locOk, 'locOpen' => $locOpen, 'locDown' => $locDown,
+        'eventsFeed' => $eventsFeed, 'sentFeed' => $sentFeed, 'failFeed' => $failFeed,
+        'mapUnits' => $mapUnits,
+        'actName' => $actName,
+    ];
+    DashboardCache::set($cacheKey, $cachePayload);
+}
+Layout::renderFoot(); ?>

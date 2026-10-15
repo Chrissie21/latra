@@ -169,6 +169,7 @@ class Schema {
             ['offline_sweep', 'Device offline sweep', 300],
             ['backup', 'Encrypted DB backup', 86400],
             ['retention', 'Log rotation / archive', 86400],
+            ['purge_delivered', 'Purge LATRA-confirmed rows', 3600],
             ['audit_rollup', 'Daily KPI rollup', 86400],
             ['reconcile', 'Crash recovery', 60],
         ];
@@ -227,6 +228,7 @@ class Schema {
             ['battery_low_mv', '3200', 'Low battery millivolt threshold'],
             ['outbox_max_tries', '8', 'Max outbox retries'],
             ['retention_days', '90', 'Keep hot message_log this many days'],
+            ['delivered_retention_hours', '24', 'Delete rows LATRA has confirmed after this many hours'],
             ['webhook_url', '', 'Operator alert webhook'],
             ['latra_ip_allowlist', '', 'Comma-separated IPs for LATRA-facing API'],
             ['scheduler_enabled', '1', 'Master scheduler switch'],
