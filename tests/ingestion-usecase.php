@@ -7,7 +7,7 @@ require_once __DIR__ . '/../includes/autoload.php';
 use Latra\Application\Ingestion\IngestVehicleMessages;
 use Latra\Application\Ingestion\IngestionEffects;
 use Latra\Application\Ingestion\IngestionRepository;
-use Latra\Infrastructure\Persistence\LegacyIngestionRepository;
+use Latra\Infrastructure\Persistence\DatabaseIngestionRepository;
 
 final class IngestionUseCaseRepository implements IngestionRepository
 {
@@ -310,18 +310,18 @@ $secondConnection = new PDO('sqlite::memory:', null, null, [PDO::ATTR_ERRMODE =>
 try {
     $databaseInstance->setValue(null, $firstConnection);
     $sensitiveConfigScrubbed->setValue(null, true);
-    $legacyRepository = new LegacyIngestionRepository();
-    $legacyRepository->beginMessage();
-    $legacyRepository->commitMessage();
+    $databaseRepository = new DatabaseIngestionRepository();
+    $databaseRepository->beginMessage();
+    $databaseRepository->commitMessage();
 
     $databaseInstance->setValue(null, $secondConnection);
-    $legacyRepository->beginMessage();
+    $databaseRepository->beginMessage();
     if ($firstConnection->inTransaction() || !$secondConnection->inTransaction()) {
         throw new RuntimeException('A later message transaction reused a stale database connection');
     }
-    $legacyRepository->rollbackMessage();
+    $databaseRepository->rollbackMessage();
     if ($secondConnection->inTransaction()) {
-        throw new RuntimeException('Legacy repository did not release its message transaction');
+        throw new RuntimeException('Database ingestion repository did not release its message transaction');
     }
 } finally {
     $databaseInstance->setValue(null, $previousDatabase);

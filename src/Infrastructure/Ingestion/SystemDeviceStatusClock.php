@@ -5,7 +5,7 @@ namespace Latra\Infrastructure\Ingestion;
 
 use Latra\Application\DeviceStatus\DeviceStatusClock;
 
-final class LegacyDeviceStatusClock implements DeviceStatusClock
+final class SystemDeviceStatusClock implements DeviceStatusClock
 {
     public function now(): string
     {

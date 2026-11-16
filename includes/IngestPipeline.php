@@ -22,8 +22,8 @@ class IngestPipeline {
 
     private static function ingest(array $vehicle, array $messages, bool $queueEligible): array {
         return (new \Latra\Application\Ingestion\IngestVehicleMessages(
-            new \Latra\Infrastructure\Persistence\LegacyIngestionRepository(),
-            new \Latra\Infrastructure\Ingestion\LegacyIngestionEffects(),
+            new \Latra\Infrastructure\Persistence\DatabaseIngestionRepository(),
+            new \Latra\Infrastructure\Ingestion\ServiceIngestionEffects(),
         ))->ingest($vehicle, $messages, $queueEligible);
     }
 

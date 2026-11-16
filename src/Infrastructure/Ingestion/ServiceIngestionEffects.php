@@ -5,7 +5,7 @@ namespace Latra\Infrastructure\Ingestion;
 
 use Latra\Application\Ingestion\IngestionEffects;
 
-final class LegacyIngestionEffects implements IngestionEffects
+final class ServiceIngestionEffects implements IngestionEffects
 {
     public function mapEmergencyType(int $activityId): ?string
     {

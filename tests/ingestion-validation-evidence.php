@@ -5,7 +5,7 @@ if (PHP_SAPI !== 'cli') {
 require_once __DIR__ . '/../includes/autoload.php';
 require_once __DIR__ . '/../includes/GpsValidator.php';
 
-use Latra\Infrastructure\Persistence\LegacyIngestionRepository;
+use Latra\Infrastructure\Persistence\DatabaseIngestionRepository;
 use Latra\Infrastructure\Persistence\PdoValidationEvidenceRepository;
 
 $database = new PDO('sqlite::memory:', null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
@@ -103,33 +103,33 @@ try {
     $databaseInstance->setValue(null, $database);
     $sensitiveConfigScrubbed->setValue(null, true);
 
-    $legacy = new LegacyIngestionRepository();
+    $databaseRepository = new DatabaseIngestionRepository();
     $database->exec('DELETE FROM validation_errors');
-    $legacy->beginMessage();
-    $legacy->recordValidationErrors($message, $errors);
-    $legacy->rollbackMessage();
+    $databaseRepository->beginMessage();
+    $databaseRepository->recordValidationErrors($message, $errors);
+    $databaseRepository->rollbackMessage();
     if ($database->inTransaction()) {
-        throw new RuntimeException('Legacy validation evidence left its message transaction open');
+        throw new RuntimeException('Database ingestion repository left its message transaction open');
     }
     if ((int) $database->query('SELECT COUNT(*) FROM validation_errors')->fetchColumn() !== 0) {
         throw new RuntimeException('Validation evidence escaped the rolled-back message transaction');
     }
 
-    $legacy->beginMessage();
-    $legacy->recordValidationErrors($message, $errors);
-    $legacy->commitMessage();
+    $databaseRepository->beginMessage();
+    $databaseRepository->recordValidationErrors($message, $errors);
+    $databaseRepository->commitMessage();
     if ((int) $database->query('SELECT COUNT(*) FROM validation_errors')->fetchColumn() !== 3) {
         throw new RuntimeException('Committed validation evidence is missing');
     }
 
     try {
-        $legacy->recordValidationErrors($message, []);
+        $databaseRepository->recordValidationErrors($message, []);
     } catch (Throwable $unexpected) {
         throw new RuntimeException('Empty validation evidence outside a transaction must stay a no-op');
     }
 
     try {
-        $legacy->recordValidationErrors($message, $errors);
+        $databaseRepository->recordValidationErrors($message, $errors);
     } catch (LogicException $expected) {
         $rejected = true;
     }

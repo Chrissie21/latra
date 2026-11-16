@@ -206,8 +206,8 @@ try {
             status_changed_at TEXT
         )',
     );
-    $legacyRepository = new \Latra\Infrastructure\Persistence\LegacyDeviceStatusRepository();
-    $legacyRepository->insert(7, [
+    $databaseRepository = new \Latra\Infrastructure\Persistence\DatabaseDeviceStatusRepository();
+    $databaseRepository->insert(7, [
         'is_online' => 1,
         'online_at' => 'now',
         'last_comm_time' => 1_800_000_000,
@@ -221,11 +221,11 @@ try {
         'tampered' => 0,
         'status_changed_at' => 'now',
     ]);
-    $stored = $legacyRepository->findByVehicleId(7);
+    $stored = $databaseRepository->findByVehicleId(7);
     if (($stored['internal_battery_pct'] ?? null) != 80.0 || $stored['vehicle_id'] != 7) {
-        throw new RuntimeException('Legacy device-status repository insert/read mapping changed');
+        throw new RuntimeException('Database device-status repository insert/read mapping changed');
     }
-    $legacyRepository->update(7, [
+    $databaseRepository->update(7, [
         'is_online' => 0,
         'online_at' => 'now',
         'last_comm_time' => 1_800_000_001,
@@ -239,10 +239,10 @@ try {
         'tampered' => 1,
         'status_changed_at' => 'later',
     ]);
-    $stored = $legacyRepository->findByVehicleId(7);
+    $stored = $databaseRepository->findByVehicleId(7);
     if ($stored['is_online'] != 0 || $stored['internal_battery_mv'] != 3100.0
         || $stored['external_power_disconnected'] != 1 || $stored['tampered'] != 1) {
-        throw new RuntimeException('Legacy device-status repository update mapping changed');
+        throw new RuntimeException('Database device-status repository update mapping changed');
     }
 } finally {
     $databaseInstance->setValue(null, $previousDatabase);

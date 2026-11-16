@@ -5,7 +5,7 @@ namespace Latra\Infrastructure\Ingestion;
 
 use Latra\Application\DeviceStatus\DeviceStatusEffects;
 
-final class LegacyDeviceStatusEffects implements DeviceStatusEffects
+final class AuditDeviceStatusEffects implements DeviceStatusEffects
 {
     public function recordTransition(int $vehicleId, string $type, string $detail): void
     {

@@ -78,7 +78,7 @@ class IngestPipeline {
             public function formattedDateTime(): string { return date(DATE_FORMAT); }
         };
         return (new \Latra\Application\Ingestion\IngestVehicleMessages($repository,
-            new \Latra\Infrastructure\Ingestion\LegacyIngestionEffects()))->ingest($vehicle,$messages, false);
+            new \Latra\Infrastructure\Ingestion\ServiceIngestionEffects()))->ingest($vehicle,$messages, false);
     }
 }
 PHP,

@@ -74,32 +74,32 @@ $createTable = static function (PDO $connection): void {
 };
 $createTable($firstConnection);
 $createTable($secondConnection);
-$legacyRepository = new \Latra\Infrastructure\Persistence\LegacyIngestionRepository();
+$databaseRepository = new \Latra\Infrastructure\Persistence\DatabaseIngestionRepository();
 try {
     $databaseInstance->setValue(null, $firstConnection);
     $sensitiveConfigScrubbed->setValue(null, true);
-    $legacyRepository->beginMessage();
-    if (!$legacyRepository->storeMessage(['vehicle_id' => 27, 'wialon_msg_time' => 2_000])) {
-        throw new RuntimeException('Legacy adapter did not store through its active transaction');
+    $databaseRepository->beginMessage();
+    if (!$databaseRepository->storeMessage(['vehicle_id' => 27, 'wialon_msg_time' => 2_000])) {
+        throw new RuntimeException('Database ingestion repository did not store through its active transaction');
     }
-    $legacyRepository->commitMessage();
+    $databaseRepository->commitMessage();
 
     $databaseInstance->setValue(null, $secondConnection);
-    $legacyRepository->beginMessage();
+    $databaseRepository->beginMessage();
     if ($firstConnection->inTransaction() || !$secondConnection->inTransaction()
-        || !$legacyRepository->storeMessage(['vehicle_id' => 27, 'wialon_msg_time' => 2_000])) {
-        throw new RuntimeException('Legacy adapter did not refresh the message repository connection');
+        || !$databaseRepository->storeMessage(['vehicle_id' => 27, 'wialon_msg_time' => 2_000])) {
+        throw new RuntimeException('Database ingestion repository did not refresh the message repository connection');
     }
-    $stored = $legacyRepository->findMessage(27, 2_000);
+    $stored = $databaseRepository->findMessage(27, 2_000);
     if ($stored === null) {
-        throw new RuntimeException('Legacy adapter could not read from the active transaction connection');
+        throw new RuntimeException('Database ingestion repository could not read from the active transaction connection');
     }
-    $legacyRepository->updateMessagePayload($stored, ['items' => []]);
-    $legacyRepository->rollbackMessage();
+    $databaseRepository->updateMessagePayload($stored, ['items' => []]);
+    $databaseRepository->rollbackMessage();
     if ($secondConnection->inTransaction()
         || $secondConnection->query('SELECT COUNT(*) FROM message_log')->fetchColumn() != 0
         || $firstConnection->query('SELECT COUNT(*) FROM message_log')->fetchColumn() != 1) {
-        throw new RuntimeException('Legacy adapter message operations escaped their captured transaction');
+        throw new RuntimeException('Database ingestion repository message operations escaped their captured transaction');
     }
 } finally {
     if ($firstConnection->inTransaction()) {

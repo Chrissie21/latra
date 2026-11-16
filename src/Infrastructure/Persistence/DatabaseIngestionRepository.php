@@ -7,7 +7,7 @@ use Latra\Application\Ingestion\IngestionRepository;
 use LogicException;
 use PDO;
 
-final class LegacyIngestionRepository implements IngestionRepository
+final class DatabaseIngestionRepository implements IngestionRepository
 {
     private ?PDO $messageTransaction = null;
 

@@ -4,6 +4,8 @@ use Latra\Application\Collection\RelayPayloadMapper;
 use Latra\Application\Collection\EnrollRelayVehicle;
 use Latra\Application\Collection\CollectRelayBucket;
 use Latra\Application\Collection\CollectRelayEventCycle;
+use Latra\Domain\Collection\RelayDeliveryGatePolicy;
+use Latra\Domain\Collection\RelayIdentityPolicy;
 use Latra\Infrastructure\Persistence\PdoRelayEnrollmentRepository;
 use Latra\Infrastructure\Persistence\PdoRelayRuntimeRepository;
 
@@ -22,9 +24,7 @@ final class RelayRuntime {
     public static function settingsOrNull(int $vehicleId): ?array {
         $row = Database::fetch('SELECT * FROM relay_vehicle_settings WHERE vehicle_id=? AND is_enabled=1', [$vehicleId]);
         if (!$row) return null;
-        foreach (['max_records', 'max_bytes', 'max_pending_records', 'max_pending_bytes'] as $key) {
-            if ((int) $row[$key] < 1) throw new RuntimeException('Explicit relay resource budgets required');
-        }
+        RelayIdentityPolicy::assertBudgets($row);
         return $row;
     }
 
@@ -152,14 +152,11 @@ final class RelayRuntime {
         $findVehicle = static function (string $unit) use (&$activeUnit, &$activeVehicle): ?array {
             if ($activeUnit !== $unit) {
                 $activeUnit = $unit;
-                if (!preg_match('/^(?:manual:)?wialon:([0-9]+)(?::.*)?$/D', $unit, $match)) {
-                    $activeVehicle = null;
-                } else {
-                    $activeVehicle = Database::fetch(
-                        'SELECT * FROM vehicles WHERE wialon_unit_id=? AND is_active=1',
-                        [(int) $match[1]]
-                    );
-                }
+                $unitVehicleId = RelayIdentityPolicy::unitVehicleId($unit);
+                $activeVehicle = $unitVehicleId === null ? null : Database::fetch(
+                    'SELECT * FROM vehicles WHERE wialon_unit_id=? AND is_active=1',
+                    [$unitVehicleId]
+                );
             }
             return $activeVehicle;
         };
@@ -196,14 +193,8 @@ final class RelayRuntime {
                     $allowed = array_map('intval', array_column(Database::fetchAll(
                         'SELECT DISTINCT activity_id FROM wialon_event_map WHERE activity_id<>1 AND is_enabled=1'), 'activity_id'));
                 }
-                $activityIds = array_map(
-                    'intval',
-                    array_column(json_decode($pending['payload'], true)['items'] ?? [], 'activity_id'),
-                );
-                foreach ($activityIds as $activityId) {
-                    if (empty($enabled[$activityId]) || !in_array($activityId, $allowed, true)) return false;
-                }
-                return true;
+                $activityIds = RelayDeliveryGatePolicy::activityIds($pending['payload']);
+                return RelayDeliveryGatePolicy::allows($enabled, $allowed, $activityIds);
             },
             static fn(): int => Schema::configInt('latra_rate_per_minute', 300),
             static fn(string $body, string $key): array => $transport($body, $key),
@@ -237,13 +228,7 @@ final class RelayRuntime {
         if (!$vehicle) {
             throw new \Latra\Domain\Exception\InvalidSubmission('Relay mode requires a known vehicle identity for queued payloads');
         }
-        $vehicleReg = $payload['vehicle_reg_no'] ?? null;
-        $imei = $payload['imei'] ?? null;
-        if (($vehicleReg !== null && (string) $vehicleReg !== (string) ($vehicle['vehicle_reg_no'] ?? ''))
-            || ($imei !== null && (string) $imei !== (string) ($vehicle['imei'] ?? ''))
-        ) {
-            throw new \Latra\Domain\Exception\InvalidSubmission('Relay payload identity does not match the owning vehicle');
-        }
+        RelayIdentityPolicy::assertOwns($vehicle, $payload);
         return self::queuePayload($vehicle, $payload);
     }
 

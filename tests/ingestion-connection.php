@@ -3,7 +3,7 @@
 if (PHP_SAPI !== 'cli') exit(1);
 require __DIR__ . '/bootstrap.php';
 require __DIR__ . '/../includes/autoload.php';
-use Latra\Infrastructure\Persistence\LegacyIngestionRepository;
+use Latra\Infrastructure\Persistence\DatabaseIngestionRepository;
 
 $pdo = new LocalTestPDO();
 $other = new LocalTestPDO();
@@ -27,7 +27,7 @@ $pdo->exec("INSERT INTO param_aliases VALUES ('*','ignition','ign',1)");
 $pdo->exec("INSERT INTO config VALUES ('outbox_max_tries','5')");
 $pdo->exec('INSERT INTO message_log VALUES (11)');
 useDatabase($pdo);
-$repo = new LegacyIngestionRepository();
+$repo = new DatabaseIngestionRepository();
 $repo->beginMessage();
 useDatabase($other); // Ambient connection replacement must not split an existing atomic write.
 if (!$repo->activityAllowed(2) || $repo->activityAllowed(3) || $repo->enabledBucketVehicleIds() !== [7]) {

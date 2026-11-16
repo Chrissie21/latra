@@ -5,7 +5,7 @@ if (PHP_SAPI !== 'cli') {
 require_once __DIR__ . '/../includes/autoload.php';
 require_once __DIR__ . '/../includes/EventDetector.php';
 
-use Latra\Infrastructure\Persistence\LegacyIngestionRepository;
+use Latra\Infrastructure\Persistence\DatabaseIngestionRepository;
 use Latra\Infrastructure\Persistence\PdoVehicleStateRepository;
 
 $database = new PDO('sqlite::memory:', null, null, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
@@ -64,31 +64,31 @@ try {
     $databaseInstance->setValue(null, $database);
     $sensitiveConfigScrubbed->setValue(null, true);
 
-    $legacy = new LegacyIngestionRepository();
-    if ((int) $legacy->loadVehicleState(7)['vehicle_id'] !== 7) {
-        throw new RuntimeException('Legacy adapter did not read the existing vehicle state');
+    $databaseRepository = new DatabaseIngestionRepository();
+    if ((int) $databaseRepository->loadVehicleState(7)['vehicle_id'] !== 7) {
+        throw new RuntimeException('Database ingestion repository did not read the existing vehicle state');
     }
 
-    $legacy->beginMessage();
-    $legacy->persistVehicleState(8, ['engine_status' => 'on', 'overspending_active' => 2]);
-    if ($legacy->loadVehicleState(8) === []) {
-        throw new RuntimeException('Legacy adapter state write did not join the message transaction');
+    $databaseRepository->beginMessage();
+    $databaseRepository->persistVehicleState(8, ['engine_status' => 'on', 'overspending_active' => 2]);
+    if ($databaseRepository->loadVehicleState(8) === []) {
+        throw new RuntimeException('Database ingestion repository state write did not join the message transaction');
     }
-    $legacy->rollbackMessage();
-    if ($database->inTransaction() || $legacy->loadVehicleState(8) !== []) {
+    $databaseRepository->rollbackMessage();
+    if ($database->inTransaction() || $databaseRepository->loadVehicleState(8) !== []) {
         throw new RuntimeException('Vehicle state write escaped the rolled-back message transaction');
     }
 
-    $legacy->persistVehicleState(9, ['engine_status' => 'off']);
-    if ((int) $legacy->loadVehicleState(9)['vehicle_id'] !== 9) {
-        throw new RuntimeException('Legacy adapter did not persist state outside a transaction');
+    $databaseRepository->persistVehicleState(9, ['engine_status' => 'off']);
+    if ((int) $databaseRepository->loadVehicleState(9)['vehicle_id'] !== 9) {
+        throw new RuntimeException('Database ingestion repository did not persist state outside a transaction');
     }
 
     // The public compatibility entry point keeps its insert/update contract.
     EventDetector::persistState(9, ['engine_status' => 'on']);
     $database->exec('UPDATE vehicle_state SET engine_status = \'off\' WHERE vehicle_id = 9');
     EventDetector::persistState(9, ['engine_status' => 'on']);
-    if ($legacy->loadVehicleState(9)['engine_status'] !== 'on'
+    if ($databaseRepository->loadVehicleState(9)['engine_status'] !== 'on'
         || (int) $database->query('SELECT COUNT(*) FROM vehicle_state WHERE vehicle_id = 9')->fetchColumn() !== 1) {
         throw new RuntimeException('EventDetector::persistState did not preserve the update path');
     }

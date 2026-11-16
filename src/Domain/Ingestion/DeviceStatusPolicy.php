@@ -5,6 +5,8 @@ namespace Latra\Domain\Ingestion;
 
 final class DeviceStatusPolicy
 {
+    public const OFFLINE_SECONDS = 900;
+
     public const BATTERY_LOW_MV = 3200;
     public const BATTERY_LOW_PCT = 20;
     public const EXT_POWER_LOW_MV = 1000;

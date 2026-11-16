@@ -5,7 +5,7 @@ namespace Latra\Infrastructure\Persistence;
 
 use Latra\Application\DeviceStatus\DeviceStatusRepository;
 
-final class LegacyDeviceStatusRepository implements DeviceStatusRepository
+final class DatabaseDeviceStatusRepository implements DeviceStatusRepository
 {
     public function findByVehicleId(int $vehicleId): ?array
     {
