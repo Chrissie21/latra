@@ -1,46 +1,24 @@
 <?php
-/**
- * Secret storage.
- */
+require_once __DIR__ . '/autoload.php';
+
+/** Compatibility names for secret configuration; no credential is read until requested. */
 class Vault {
-    public static function ensureTable(): void {
-        Database::query("CREATE TABLE IF NOT EXISTS vault (
-            vault_key VARCHAR(100) PRIMARY KEY,
-            ciphertext TEXT NOT NULL,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB");
+    private static function repository(): \Latra\Infrastructure\Persistence\PdoSecretRepository {
+        return new \Latra\Infrastructure\Persistence\PdoSecretRepository(Database::getInstance());
     }
-
-    public static function put(string $key, string $plain): void {
-        self::ensureTable();
-        $ct = self::encrypt($plain);
-        Database::query(
-            "INSERT INTO vault (vault_key, ciphertext) VALUES (?, ?)
-             ON DUPLICATE KEY UPDATE ciphertext = VALUES(ciphertext)",
-            [$key, $ct]
-        );
+    private static function cipher(): \Latra\Infrastructure\Security\AesGcmSecretCipher {
+        return new \Latra\Infrastructure\Security\AesGcmSecretCipher(static fn(): string => envValue('APP_KEY', ''));
     }
-
-    public static function get(string $key, string $fallback = ''): string {
-        self::ensureTable();
-        $row = Database::fetch("SELECT ciphertext FROM vault WHERE vault_key = ?", [$key]);
-        if (!$row || $row['ciphertext'] === '') {
-            return $fallback;
-        }
-        try {
-            $plain = self::decrypt($row['ciphertext']);
-            return $plain !== '' ? $plain : $fallback;
-        } catch (Throwable $e) {
-            error_log('vault decrypt failed for key (name only)');
-            return $fallback;
-        }
+    private static function work(): \Latra\Application\Security\ManageSecrets {
+        return new \Latra\Application\Security\ManageSecrets(self::repository(), self::cipher(),
+            static fn() => error_log('vault decrypt failed for key (name only)'));
     }
-
-    public static function has(string $key): bool {
-        self::ensureTable();
-        $row = Database::fetch("SELECT vault_key FROM vault WHERE vault_key = ?", [$key]);
-        return (bool) $row;
-    }
+    public static function ensureTable(): void { self::repository()->ensure(); }
+    public static function put(string $key, string $plain): void { self::work()->put($key, $plain); }
+    public static function get(string $key, string $fallback = ''): string { return self::work()->get($key, $fallback); }
+    public static function has(string $key): bool { return self::work()->has($key); }
+    public static function encrypt(string $plain): string { return self::cipher()->encrypt($plain); }
+    public static function decrypt(string $blob): string { return self::cipher()->decrypt($blob); }
 
     public static function wialonToken(): string {
         return self::get('wialon_token', defined('WIALON_TOKEN') ? WIALON_TOKEN : '');
@@ -62,40 +40,4 @@ class Vault {
         return self::get('latra_password', defined('LATRA_PASSWORD') ? LATRA_PASSWORD : '');
     }
 
-    private static function keyBytes(): string {
-        $raw = envValue('APP_KEY', '');
-        if ($raw === '') {
-            throw new RuntimeException('APP_KEY is not set. Run scripts/install.php to generate one.');
-        }
-        $bin = ctype_xdigit($raw) && strlen($raw) === 64 ? hex2bin($raw) : base64_decode($raw, true);
-        if ($bin === false || strlen($bin) < 32) {
-            throw new RuntimeException('APP_KEY must be 32 bytes (64 hex chars or base64).');
-        }
-        return substr($bin, 0, 32);
-    }
-
-    public static function encrypt(string $plain): string {
-        $iv = random_bytes(12);
-        $tag = '';
-        $ct = openssl_encrypt($plain, 'aes-256-gcm', self::keyBytes(), OPENSSL_RAW_DATA, $iv, $tag);
-        if ($ct === false) {
-            throw new RuntimeException('encrypt failed');
-        }
-        return base64_encode($iv . $tag . $ct);
-    }
-
-    public static function decrypt(string $blob): string {
-        $raw = base64_decode($blob, true);
-        if ($raw === false || strlen($raw) < 29) {
-            throw new RuntimeException('ciphertext truncated');
-        }
-        $iv = substr($raw, 0, 12);
-        $tag = substr($raw, 12, 16);
-        $ct = substr($raw, 28);
-        $plain = openssl_decrypt($ct, 'aes-256-gcm', self::keyBytes(), OPENSSL_RAW_DATA, $iv, $tag);
-        if ($plain === false) {
-            throw new RuntimeException('decrypt failed');
-        }
-        return $plain;
-    }
 }
