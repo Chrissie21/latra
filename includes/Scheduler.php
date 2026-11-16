@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__ . "/autoload.php";
 /**
  * Scheduler.
  */
@@ -13,112 +14,26 @@ class Scheduler {
         self::tickJobs();
     }
 
-    /** Run due automation buckets under a dedicated lock. */
-    public static function tickBuckets(): void {
-        $lock = Database::fetch("SELECT GET_LOCK('latra-scheduler-buckets', 0) AS acquired");
-        if (!(int) ($lock['acquired'] ?? 0)) {
-            echo "[" . date(DATE_FORMAT) . "] Bucket scheduler already running.\n";
-            return;
-        }
-        try {
-            if (Schema::config('scheduler_enabled', '1') !== '1') {
-                return;
-            }
-            self::runDueBuckets();
-        } catch (Throwable $e) {
-            Logger::error('bucket.tick', ['error' => $e->getMessage()]);
-        } finally {
-            try {
-                Database::query("SELECT RELEASE_LOCK('latra-scheduler-buckets')");
-            } catch (Throwable $ignored) {
-            }
-        }
-    }
+    /** Compatibility entry points compose the scheduling use case on one database session. */
+    public static function tickBuckets(): void { self::work()->buckets(); }
+    public static function tickJobs(): void { self::work()->jobs(); }
+    public static function runBucket(array $bucket): void { self::work()->bucket($bucket); }
 
-    /** Run due background jobs under a separate lock. */
-    public static function tickJobs(): void {
-        $lock = Database::fetch("SELECT GET_LOCK('latra-scheduler', 0) AS acquired");
-        if (!(int) ($lock['acquired'] ?? 0)) {
-            echo "[" . date(DATE_FORMAT) . "] Scheduler already running.\n";
-            return;
-        }
-        try {
-            if (Schema::config('scheduler_enabled', '1') !== '1') {
-                echo "[" . date(DATE_FORMAT) . "] Scheduler disabled.\n";
-                return;
-            }
-            self::runDueJobs();
-        } finally {
-            try {
-                Database::query("SELECT RELEASE_LOCK('latra-scheduler')");
-            } catch (Throwable $ignored) {
-            }
-        }
-    }
-
-    private static function runDueJobs(): void {
-        // Hard rule: activity-1 rows must never reach LATRA. Sweep any strays
-        // left from configs that predate the exclusion before jobs run.
-
-        $jobs = Database::fetchAll(
-            "SELECT * FROM jobs WHERE is_enabled = 1 AND (next_run_at IS NULL OR next_run_at <= NOW())
-             ORDER BY FIELD(job_key, 'reconcile','emergency_poll','flush_outbox','poll_messages','offline_sweep','purge_delivered','fleet_sync','backup','retention','audit_rollup')"
+    private static function work(): \Latra\Application\Scheduling\RunScheduledWork {
+        $pdo = Database::getInstance();
+        return new \Latra\Application\Scheduling\RunScheduledWork(
+            new \Latra\Infrastructure\Persistence\PdoScheduleRepository($pdo),
+            new \Latra\Infrastructure\Scheduling\MysqlScheduleLocks($pdo),
+            new \Latra\Infrastructure\Scheduling\SystemScheduleClock(DATE_FORMAT),
+            static fn(): bool => Schema::config('scheduler_enabled', '1') === '1',
+            static fn(string $key): int => self::execute($key),
+            static fn(array $bucket): array => BucketRunner::run($bucket),
+            static function(string $event, array $context, bool $warning): void {
+                if ($warning) Logger::warn($event, $context); else Logger::error($event, $context);
+            },
+            static fn(string $event, array $context) => Webhooks::emit($event, $context),
+            static function(string $message): void { echo $message; },
         );
-        foreach ($jobs as $job) {
-            $key = $job['job_key'];
-            $jlock = Database::fetch("SELECT GET_LOCK(?, 0) AS acquired", ['latra-job-' . $key]);
-            if (!(int) ($jlock['acquired'] ?? 0)) {
-                continue;
-            }
-            $started = microtime(true);
-            $runId = Database::insert('job_runs', [
-                'job_key' => $key,
-                'status' => 'running',
-                'started_at' => date(DATE_FORMAT),
-            ]);
-            $items = 0;
-            $error = null;
-            try {
-                $items = self::execute($key);
-                Database::update('job_runs', [
-                    'status' => 'ok',
-                    'finished_at' => date(DATE_FORMAT),
-                    'duration_ms' => (int) round((microtime(true) - $started) * 1000),
-                    'items_processed' => $items,
-                ], 'id = ?', [$runId]);
-                Database::update('jobs', [
-                    'last_run_at' => date(DATE_FORMAT),
-                    'next_run_at' => date(DATE_FORMAT, time() + max(1, (int) $job['interval_seconds'])),
-                    'last_status' => 'ok',
-                    'last_error' => null,
-                    'run_count' => (int) $job['run_count'] + 1,
-                ], 'id = ?', [$job['id']]);
-            } catch (Throwable $e) {
-                $error = $e->getMessage();
-                Logger::error('job.failed', ['job' => $key, 'error' => $error]);
-                try {
-                    Database::update('job_runs', [
-                        'status' => 'failed',
-                        'finished_at' => date(DATE_FORMAT),
-                        'duration_ms' => (int) round((microtime(true) - $started) * 1000),
-                        'error' => $error,
-                    ], 'id = ?', [$runId]);
-                    Database::update('jobs', [
-                        'last_run_at' => date(DATE_FORMAT),
-                        'next_run_at' => date(DATE_FORMAT, time() + 30),
-                        'last_status' => 'failed',
-                        'last_error' => $error,
-                    ], 'id = ?', [$job['id']]);
-                    Webhooks::emit('job_failed', ['job' => $key]);
-                } catch (Throwable $ignored) {
-                }
-            } finally {
-                try {
-                    Database::query("SELECT RELEASE_LOCK(?)", ['latra-job-' . $key]);
-                } catch (Throwable $ignored) {
-                }
-            }
-        }
     }
 
     private static function execute(string $key): int {
@@ -138,17 +53,14 @@ class Scheduler {
         };
     }
 
+    /**
+     * Crash recovery for the relay-only architecture.
+     *
+     * The legacy outbox is retained as history and is never produced or drained,
+     * so recovery only clears locks left behind by an interrupted scheduler run.
+     */
     private static function jobReconcile(): int {
-        $n = Outbox::reconcileStale(300);
-        // Preserve the original automatic cooldown; only actual attempts consume retry budget.
-        $reset = Outbox::resetTerminal(1800);
-        Database::query(
-            "UPDATE jobs SET locked_until = NULL WHERE locked_until IS NOT NULL AND locked_until < NOW()"
-        );
-        if ($n > 0 || $reset > 0) {
-            Logger::warn('outbox.reconciled', ['stale' => $n, 'reset' => $reset]);
-        }
-        return $n + $reset;
+        return (new \Latra\Infrastructure\Persistence\PdoMaintenanceRepository(Database::getInstance()))->reconcileJobLocks();
     }
 
     private static function jobFleetSync(): int {
@@ -173,98 +85,45 @@ class Scheduler {
         );
     }
 
-    /** Drain small candidate pages without claiming work that cannot start in time. */
+    /** Relay-only flush with the original work and time budgets. */
     private static function jobFlush(bool $emergencyOnly): int {
-        if (defined('DELIVERY_ARCHITECTURE') && DELIVERY_ARCHITECTURE === 'relay') {
-            return RelayRuntime::flush($emergencyOnly ? 40 : 80, $emergencyOnly, 120);
-        }
-        $started = hrtime(true);
-        $budget = 120; // The original two-minute budget applies to both flush modes.
-        $limit = $emergencyOnly ? 40 : 80;
-        $ok = $fail = $deferred = $processed = 0;
-        // Start only work that fits within the original overall deadline.
-        while ($processed < $limit && (hrtime(true) - $started) / 1e9 < $budget) {
-            $rows = Outbox::claimBatch(1, $emergencyOnly);
-            if (!$rows) break;
-            $row = $rows[0];
-            // Delivery validates and reuses the stored body while holding its key lock.
-            $remaining = (int) floor($budget - (hrtime(true) - $started) / 1e9);
-            if ($remaining <= 0) break; // Selection alone does not claim or charge the row.
-            $result = LatraAdapter::submit([], $row['idempotency_key'], $remaining);
-            $processed++;
-            if (!empty($result['deferred'])) {
-                $deferred++;
-                // Another sender may own this first candidate; do not busy-spin on it.
-                break;
-            }
-            LatraAdapter::recordPush(['vehicle_id' => $row['vehicle_id'], 'id' => $row['message_id']],
-                (int) $row['activity_id'], $result, (string) $row['id'], (int) $row['tries'] + 1);
-            if (!empty($result['ok'])) {
-                Database::update('message_log', ['latra_status' => 'sent',
-                    'pushed_at' => date(DATE_FORMAT),
-                    'latra_response' => substr((string) $result['response'], 0, 2000)], 'id = ?', [$row['message_id']]);
-                $ok++;
-            } else {
-                // Delivery owns retry state; source projections must not overwrite that state.
-                $fail++;
-            }
-        }
-        // Preserve pressure alerts using bounded index probes instead of a full-history SUM.
-        $pressure = Outbox::pressure();
-        if ($pressure !== null) Webhooks::emit('outbox_pressure', $pressure);
-        // Flush telemetry is constant work rather than an aggregate over all retained queue history.
-        Logger::info('outbox.flush', ['ok' => $ok, 'fail' => $fail, 'deferred' => $deferred,
-            'elapsed_s' => round((hrtime(true) - $started) / 1e9, 3), 'emergency' => $emergencyOnly]);
-        return $processed;
+        return RelayRuntime::flush($emergencyOnly ? 40 : 80, $emergencyOnly, 120);
     }
 
     private static function jobFuelReport(): int {
         return (new \Latra\Application\Ingestion\SubmitFuelReports(
             new \Latra\Infrastructure\Persistence\PdoFuelReportRepository(Database::getInstance()),
             new \Latra\Infrastructure\Wialon\WialonFuelReportSource(static fn(): WialonAPI => FleetSync::connector()),
-            static fn(array $vehicle, array $payload): array => RelayRuntime::enabled()
-                ? RelayRuntime::queueForVehicle($payload, (int)$vehicle['id'])
-                : LatraAdapter::submit($payload, 'fuel-report-' . $vehicle['id'] . '-' . floor(time()/1800)),
+            static fn(array $vehicle, array $payload): array =>
+                RelayRuntime::queueForVehicle($payload, (int) $vehicle['id']),
             static function(string $event, array $context, bool $warning): void {
                 if ($warning) Logger::warn($event,$context); else Logger::info($event,$context);
             },
-            RelayRuntime::enabled(),
+            true,
         ))->run();
     }
 
     private static function jobOffline(): int {
-        GpsMonitor::refresh();
-        $n = DeviceMonitor::markOffline();
-        if ($n > 0) {
-            Webhooks::emit('device_offline', ['count' => $n]);
-        }
-        return $n;
+        return (new \Latra\Application\Maintenance\RunOfflineSweep(
+            static fn(): array => GpsMonitor::refresh(), static fn(): int => DeviceMonitor::markOffline(),
+            static fn(string $type, array $payload) => Webhooks::emit($type, $payload),
+        ))->run();
     }
 
     private static function jobBackup(): int {
-        $script = dirname(__DIR__) . '/scripts/backup.sh';
-        if (!is_executable($script) && !is_file($script)) {
-            throw new RuntimeException('backup.sh missing');
-        }
-        $cmd = 'bash ' . escapeshellarg($script);
-        exec($cmd, $out, $code);
-        if ($code !== 0) {
-            Webhooks::emit('backup_failed', ['code' => $code]);
-            throw new RuntimeException('backup exit ' . $code);
-        }
-        return 1;
+        return (new \Latra\Application\Maintenance\CreateBackup(
+            new \Latra\Infrastructure\Maintenance\ShellBackupProcess(dirname(__DIR__) . '/scripts/backup.sh'),
+            static fn(string $type, array $payload) => Webhooks::emit($type, $payload),
+        ))->run();
     }
 
     /** Archive in small transactions while honoring the original daily retention window. */
     private static function jobRetention(): int {
-        $days = Schema::configInt('retention_days', 90);
-        $moved = Retention::archiveMessages($days);
-        $moved += self::purgeDelivered();
-        // Keep the original log age policy and leave filesystem cleanup on its existing schedule.
-        foreach (glob(LOGS_DIR . '/*.log') ?: [] as $file) {
-            if (filemtime($file) < time() - $days * 86400) @unlink($file);
-        }
-        return $moved;
+        return (new \Latra\Application\Maintenance\ArchiveHistoricalData(
+            static fn(int $days): int => Retention::archiveMessages($days), static fn(): int => self::purgeDelivered(),
+            (new \Latra\Infrastructure\Maintenance\FilesystemLogPruner(LOGS_DIR))->before(...),
+            static fn(): int => time(),
+        ))->run(Schema::configInt('retention_days', 90));
     }
 
     /** Honor the original hour-based purge policy and its existing scheduled job. */
@@ -273,112 +132,7 @@ class Scheduler {
     }
 
     private static function jobRollup(): int {
-        Database::query(
-            "INSERT INTO kpi_daily (day, vehicles, messages, sent, failed, rejected, emergencies)
-             SELECT CURDATE(),
-                (SELECT COUNT(*) FROM vehicles),
-                (SELECT COUNT(*) FROM message_log WHERE DATE(created_at) = CURDATE()),
-                (SELECT COUNT(*) FROM outbox WHERE status = 'sent' AND DATE(updated_at) = CURDATE()),
-                (SELECT COUNT(*) FROM outbox WHERE status = 'failed' AND DATE(updated_at) = CURDATE()),
-                (SELECT COUNT(*) FROM message_log WHERE latra_status = 'rejected' AND DATE(created_at) = CURDATE()),
-                (SELECT COUNT(*) FROM emergency_events WHERE DATE(started_at) = CURDATE())
-             ON DUPLICATE KEY UPDATE
-                vehicles = VALUES(vehicles), messages = VALUES(messages), sent = VALUES(sent),
-                failed = VALUES(failed), rejected = VALUES(rejected), emergencies = VALUES(emergencies)"
-        );
-        return 1;
+        return (new \Latra\Infrastructure\Persistence\PdoMaintenanceRepository(Database::getInstance()))->rollupDaily();
     }
 
-    // Bucket automation overlay.
-    private static function runDueBuckets(): void {
-        // Clean orphaned running jobs.
-        Database::query(
-            "UPDATE automation_runs SET status = 'orphaned', finished_at = NOW(), error_message = 'run timed out (orphan cleanup)'
-             WHERE status = 'running' AND started_at < NOW() - INTERVAL 3 MINUTE"
-        );
-
-        $buckets = Database::fetchAll(
-            "SELECT * FROM automation_buckets WHERE is_enabled = 1 AND (next_run_at IS NULL OR next_run_at <= NOW()) ORDER BY COALESCE(next_run_at, '1970-01-01'), id"
-        );
-        foreach ($buckets as $bucket) {
-            self::runBucket($bucket);
-        }
-    }
-
-    public static function runBucket(array $bucket): void {
-        $bucketId = (int) $bucket['id'];
-        if (!Database::fetch("SELECT GET_LOCK(?, 0) AS acquired", ['latra-bucket-' . $bucketId])['acquired']) {
-            return;
-        }
-        // Reserve the slot before running.
-        $triggeredBy = (int) ($bucket['run_on_demand'] ?? 0) === 1 ? 'manual' : 'schedule';
-        $interval = 180;
-        $cooldown = 0;
-        Database::update('automation_buckets', [
-            'next_run_at' => date(DATE_FORMAT, time() + $interval + $cooldown),
-            'run_count' => (int) $bucket['run_count'] + 1,
-            'run_on_demand' => 0,
-        ], 'id = ?', [$bucketId]);
-
-        $started = microtime(true);
-        $runId = null;
-        try {
-            $runId = Database::insert('automation_runs', [
-                'bucket_id' => $bucketId,
-                'status' => 'running',
-                'triggered_by' => $triggeredBy,
-                'started_at' => date(DATE_FORMAT),
-            ]);
-            $stats = BucketRunner::run($bucket);
-            $failed = (int) ($stats['failed'] ?? 0);
-            $success = (int) ($stats['pushed'] ?? 0);
-            $skipped = (int) ($stats['skipped'] ?? 0) + (int) ($stats['denied'] ?? 0);
-            $total = $success + $failed + $skipped;
-            $skipReason = '';
-            if ($skipped > 0) {
-                if ((int) ($stats['denied'] ?? 0) > 0) {
-                    $skipReason = 'Some vehicles were skipped because Wialon access was denied or the unit ID is unavailable.';
-                } else {
-                    $skipReason = 'Some vehicles were skipped because no new Wialon telemetry was available for this interval.';
-                }
-            }
-            Database::update('automation_runs', [
-                'status' => $failed ? 'completed_failed' : 'completed',
-                'finished_at' => date(DATE_FORMAT),
-                'duration_seconds' => (int) round(microtime(true) - $started),
-                'total_count' => $total,
-                'success_count' => $success,
-                'failed_count' => $failed,
-                'manual_count' => 0,
-                'skipped_count' => $skipped,
-                'error_message' => $skipReason ?: null,
-            ], 'id = ?', [$runId]);
-            Database::update('automation_buckets', [
-                'last_run_at' => date(DATE_FORMAT),
-                'fail_count' => $failed > 0 ? ((int) $bucket['fail_count'] + $failed) : (int) $bucket['fail_count'],
-                'consecutive_failures' => $failed > 0 ? ((int) $bucket['consecutive_failures'] + 1) : 0,
-                'last_error' => $failed ? "$failed failed, $skipped skipped" : ($skipReason ?: null),
-            ], 'id = ?', [$bucketId]);
-            if ($skipped > 0) {
-                Logger::warn('bucket.partial', ['bucket' => $bucketId, 'skipped' => $skipped, 'denied' => (int) ($stats['denied'] ?? 0)]);
-            }
-        } catch (Throwable $e) {
-            Logger::error('bucket.error', ['bucket' => $bucketId, 'error' => $e->getMessage()]);
-            if ($runId) {
-                Database::update('automation_runs', [
-                    'status' => 'failed',
-                    'finished_at' => date(DATE_FORMAT),
-                    'error_message' => $e->getMessage(),
-                ], 'id = ?', [$runId]);
-            }
-            Database::update('automation_buckets', [
-                'last_run_at' => date(DATE_FORMAT),
-                'fail_count' => (int) $bucket['fail_count'] + 1,
-                'consecutive_failures' => (int) $bucket['consecutive_failures'] + 1,
-                'last_error' => $e->getMessage(),
-            ], 'id = ?', [$bucketId]);
-        } finally {
-            Database::query("SELECT RELEASE_LOCK(?)", ['latra-bucket-' . $bucketId]);
-        }
-    }
 }
