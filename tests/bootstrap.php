@@ -70,7 +70,6 @@ function testDatabase(): PDO {
 
 require_once __DIR__ . '/../includes/Database.php';
 require_once __DIR__ . '/../includes/Outbox.php';
-require_once __DIR__ . '/../includes/Delivery.php';
 require_once __DIR__ . '/../includes/Retention.php';
 require_once __DIR__ . '/../includes/Automation.php';
 require_once __DIR__ . '/../includes/Export.php';

@@ -308,64 +308,6 @@ class Automation {
     }
 
     /**
-     * Claim-on-push: takes ownership of a message for one attempt.
-     * Only the claim owner may push; a stale claim (lease expired) is reclaimable.
-     */
-    public static function claimMessage(int $msgId, int $leaseSeconds): ?string {
-        $claimId = bin2hex(random_bytes(16));
-        $stmt = Database::query(
-            "UPDATE message_log
-             SET latra_claim_id = ?, latra_claimed_at = ?, latra_attempts = latra_attempts + 1
-             WHERE id = ? AND latra_status IN ('pending','failed') AND max_attempts > latra_attempts
-               AND (next_retry_at IS NULL OR next_retry_at <= NOW())
-               AND (latra_claimed_at IS NULL OR latra_claimed_at < NOW() - INTERVAL ? SECOND)",
-            [$claimId, date(DATE_FORMAT), $msgId, $leaseSeconds]
-        );
-        return $stmt->rowCount() > 0 ? $claimId : null;
-    }
-
-    /** Terminal update after a claim owner has pushed. */
-    public static function finishMessage(int $msgId, string $status, array $result, string $claimId, ?string $failClass = null, ?int $backoff = null): void {
-        $nextRetry = $backoff !== null ? date(DATE_FORMAT, time() + $backoff) : null;
-        Database::update('message_log', [
-            'latra_claim_id' => null,
-            'latra_claimed_at' => null,
-            'latra_status' => $status,
-            'latra_response' => $result['curlError'] ?: ($result['response'] ?: 'LATRA rejected the payload'),
-            'pushed_at' => date(DATE_FORMAT),
-            'next_retry_at' => $nextRetry,
-            'latra_manual_at' => $status === 'manual' ? date(DATE_FORMAT) : null,
-        ], 'id = ? AND latra_claim_id = ?', [$msgId, $claimId]);
-    }
-
-    public static function recordPush(array $msg, int $activityId, array $result, string $claimId, int $attempt): void {
-        // Preserve legacy HTTP receipts, but do not duplicate centrally recorded or local-only results.
-        if (!empty($result['recorded']) || !empty($result['deduplicated'])
-            || (array_key_exists('attempted', $result) && !$result['attempted'])) return;
-        Database::insert('push_log', [
-            'vehicle_id' => $msg['vehicle_id'],
-            'activity_id' => $activityId,
-            'message_log_id' => $msg['msg_id'] ?? $msg['id'] ?? null,
-            'payload' => json_encode($result['payload']),
-            'response_status' => $result['responseData']['status'] ?? null,
-            'response_body' => $result['response'] ?: $result['curlError'],
-            'http_code' => $result['httpCode'],
-            'latency_ms' => $result['latency'],
-            'claim_id' => $claimId,
-            'attempt' => $attempt,
-        ]);
-    }
-
-    /** Permanent vs transient so retries only burn on recoverable failures. */
-    public static function classifyFailure(int $httpCode, array $responseData, string $curlError): string {
-        if ($curlError !== '') return 'transient';
-        // Throttling and request timeouts must wait and retry, not become permanent rejection.
-        if (in_array($httpCode, [0, 408, 425, 429], true) || $httpCode >= 500) return 'transient';
-        if ($httpCode >= 400 && $httpCode <= 499) return 'permanent';
-        return 'permanent'; // HTTP 200 with status != '1' — the API rejected the payload
-    }
-
-    /**
      * Get activity_ids from all enabled buckets.
      * Returns [1, 2, 3] if buckets for movement/engine_on/engine_off are enabled.
      * Empty array means no activities should be pushed to LATRA.
@@ -412,32 +354,5 @@ class Automation {
     public static function log(string $event, array $ctx = []): void {
         $line = json_encode(array_merge(['ts' => gmdate('Y-m-d\TH:i:s\Z')], ['event' => $event], $ctx));
         @file_put_contents(LOGS_DIR . '/automation-' . date('Y-m-d') . '.log', $line . "\n", FILE_APPEND);
-    }
-
-    public static function push(array $message, int $activityId): array {
-        $payload = LatraMapper::buildPayload($message, $message, $activityId,
-            json_decode($message['addon_info'] ?? '[]', true) ?: [],
-            json_decode($message['fuel_info'] ?? '[]', true) ?: []
-        );
-        if (RelayRuntime::enabled()) {
-            $vehicle = Database::fetch('SELECT * FROM vehicles WHERE id = ?', [(int) ($message['vehicle_id'] ?? 0)]);
-            if (!$vehicle) {
-                return ['ok' => false, 'payload' => $payload, 'response' => 'Vehicle not found for relay submission',
-                    'responseData' => [], 'httpCode' => 0, 'latency' => 0, 'curlError' => 'Vehicle not found',
-                    'attempted' => false, 'deferred' => true];
-            }
-            try {
-                $result = RelayRuntime::queueForVehicle($payload, (int) ($message['vehicle_id'] ?? $vehicle['id'] ?? 0));
-                return ['ok' => !empty($result['success']), 'queued' => (int) ($result['queued'] ?? 0),
-                    'payload' => $payload, 'response' => $result['message'] ?? 'Queued for relay delivery',
-                    'responseData' => [], 'httpCode' => 0, 'latency' => 0, 'curlError' => '',
-                    'attempted' => false, 'recorded' => true];
-            } catch (Throwable $e) {
-                return ['ok' => false, 'payload' => $payload, 'response' => $e->getMessage(),
-                    'responseData' => [], 'httpCode' => 0, 'latency' => 0, 'curlError' => $e->getMessage(),
-                    'attempted' => false, 'deferred' => true];
-            }
-        }
-        return LatraAdapter::submit($payload, (string) ($message['idempotency_key'] ?? ('msg-' . ($message['id'] ?? 'x'))));
     }
 }

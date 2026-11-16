@@ -45,7 +45,6 @@ require __DIR__ . '/../includes/Scheduler.php';
 require __DIR__ . '/../includes/IngestPipeline.php';
 require __DIR__ . '/../includes/Automation.php';
 require __DIR__ . '/../includes/EmergencyHandler.php';
-require __DIR__ . '/../includes/LatraAdapter.php';
 function expect(bool $ok, string $why): void { if (!$ok) throw new RuntimeException($why); }
 class Database {
     public static function getInstance(): PDO {
@@ -100,10 +99,10 @@ expect($flush->invoke(null, false) === 2 && $flush->invoke(null, true) === 2, 'F
 expect(in_array(['flush', 80, false, 120], RelayRuntime::$calls, true)
     && in_array(['flush', 40, true, 120], RelayRuntime::$calls, true), 'Existing flush work/time budgets changed');
 echo "PASS ordinary poll, bucket, event engine and flush enter relay with existing budgets\n";
-$direct = LatraAdapter::submit(['items' => [['activity_id' => '1']]], 'cutover-test');
-expect(!empty($direct['deferred']) && empty($direct['attempted']),
-    'LATRA adapter attempted direct transport while relay architecture is active');
-echo "PASS shared LATRA adapter refuses direct transport in relay mode\n";
+foreach (['LatraAdapter', 'Delivery'] as $retired) {
+    expect(!class_exists($retired), 'Retired direct-send class is still loadable: ' . $retired);
+}
+echo "PASS legacy direct-send transport classes are retired\n";
 $fuelReport = new ReflectionMethod(Scheduler::class, 'jobFuelReport');
 expect($fuelReport->invoke(null) === 1 && count(RelayRuntime::$queuedPayloads) === 1,
     'Scheduled fuel report was not queued in relay mode');
@@ -113,28 +112,8 @@ expect(RelayRuntime::$queuedPayloads[0][1]['vehicle_reg_no'] === 'SYNTHETIC'
     && RelayRuntime::$queuedPayloads[0][1]['items'][0]['longitude'] === '39.2',
     'Scheduled fuel report lost vehicle identity or live position before relay queueing');
 echo "PASS scheduled fuel reports preserve vehicle identity and queue through relay\n";
-$queuedBeforeAutomation = count(RelayRuntime::$queuedPayloads);
-$automationPush = Automation::push([
-    'vehicle_id' => 1,
-    'id' => 99,
-    'wialon_msg_time' => time(),
-    'vehicle_reg_no' => 'SYNTHETIC',
-    'imei' => '123456789012345',
-    'lat' => -6.8,
-    'lng' => 39.2,
-    'speed' => 20,
-    'bearing' => 90,
-    'satellite_count' => 8,
-    'addon_info' => '[]',
-    'fuel_info' => '[]',
-    'idempotency_key' => 'relay-automation-1',
-], 8);
-expect($automationPush['ok'] === true && ($automationPush['queued'] ?? 0) === 1
-    && count(RelayRuntime::$queuedPayloads) === $queuedBeforeAutomation + 1,
-    'Automation submit path bypassed the owner-checking relay queue');
-echo "PASS automation push path routes through the relay owner guard\n";
 WialonAPI::$missingPosition = true;
-expect($fuelReport->invoke(null) === 0 && count(RelayRuntime::$queuedPayloads) === 2,
+expect($fuelReport->invoke(null) === 0 && count(RelayRuntime::$queuedPayloads) === 1,
     'Fuel report without a live source position was queued');
 WialonAPI::$missingPosition = false;
 $loginFailed = false;

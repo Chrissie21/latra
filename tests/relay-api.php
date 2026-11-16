@@ -54,10 +54,14 @@ class LatraMapper {
     public static function buildFuelInfo(...$args): array { return []; }
     public static function buildTripStats(...$args): array { return []; }
 }
+class FleetSync {
+    public static function syncAll(): array { return ['synced'=>2,'updated'=>3]; }
+    public static function syncOne(int $id): void { if ($id!==1) throw new RuntimeException('Vehicle not found'); }
+}
 class WialonAPI { public function __construct() { throw new RuntimeException('Legacy source bypass'); } }
 class EventDetector { public const ENGINE_OFF = 3; }
 class RelayRuntime {
-    public static function enabled(): bool { return true; }
+    public static function enabled(): bool { return getenv('API_RELAY_DISABLED') !== '1'; }
     public static function queueForVehicle(array $payload, ?int $vehicleId = null): array {
         $vehicle = ['id' => $vehicleId ?? 1, 'vehicle_reg_no' => $payload['vehicle_reg_no'] ?? 'SYNTHETIC', 'imei' => $payload['imei'] ?? '123456789012345'];
         if (($vehicle['id'] ?? null) !== 1 || empty($payload['items'])) {
@@ -98,6 +102,10 @@ function request(string $root, string $action, bool $sse = false, array $environ
 }
 function expect(bool $ok, string $why): void { if (!$ok) throw new RuntimeException($why); }
 try {
+    $sync = json_decode(request($root, 'sync_wialon'),true,512,JSON_THROW_ON_ERROR);
+    expect($sync === ['success'=>true,'message'=>'Synced: 2 new, 3 updated'], 'Fleet sync API did not use the shared application flow');
+    $syncOne = json_decode(request($root, 'sync_single_vehicle',false,[],['id'=>1]),true,512,JSON_THROW_ON_ERROR);
+    expect($syncOne === ['success'=>true,'message'=>'Vehicle data updated from Wialon'], 'Single-vehicle sync API did not use the shared application flow');
     $single = json_decode(request($root, 'fetch_messages'), true, 512, JSON_THROW_ON_ERROR);
     expect(($single['success'] ?? false) === true && ($single['fetched'] ?? null) === 3 && ($single['rejected'] ?? null) === 1,
         'Single-vehicle fetch bypassed relay or lost review evidence');
@@ -117,6 +125,12 @@ try {
     }
     $badCsrf=json_decode(request($root, 'bulk_fetch_messages', true, ['CSRF'=>'wrong']), true, 512, JSON_THROW_ON_ERROR);
     expect(($badCsrf['success'] ?? null) === false && !isset($badCsrf['fetched']), 'SSE CSRF boundary was lost');
+
+    foreach (['push_single','post_to_latra','push_custom_payload','retry_push','bulk_push_activity'] as $disabledAction) {
+        $disabled = json_decode(request($root, $disabledAction, $disabledAction === 'bulk_push_activity', ['API_RELAY_DISABLED'=>'1']), true, 512, JSON_THROW_ON_ERROR);
+        expect(($disabled['success'] ?? null) === false && str_contains($disabled['error'] ?? '', 'Direct LATRA delivery is disabled'),
+            'Disabled relay exposed a retired direct-send API path: ' . $disabledAction);
+    }
 
     foreach (['push_single', 'post_to_latra', 'push_custom_payload', 'retry_push'] as $action) {
         $result = json_decode(request($root, $action), true, 512, JSON_THROW_ON_ERROR);

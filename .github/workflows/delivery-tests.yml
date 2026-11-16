@@ -30,7 +30,7 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
-          extensions: pdo_mysql, pdo_sqlite, mbstring
+          extensions: pdo_mysql, pdo_sqlite, curl, mbstring
           coverage: none
       - name: Parse PHP sources
         run: find . -name '*.php' -not -path './.git/*' -not -path './vendor/*' -print0 | xargs -0 -n1 php -l
@@ -41,23 +41,6 @@ jobs:
           LATRA_TEST_PASSWORD: synthetic-test-password
           LATRA_TEST_ALLOW_RESET: '1'
         run: php tests/delivery-retention.php
-      # The only HTTP integration in this suite is an ephemeral local mock.
-      - name: Verify adapter against mock HTTP destination
-        env:
-          LATRA_TEST_DSN: mysql:host=127.0.0.1;port=3306;dbname=latra_test_delivery;charset=utf8mb4
-          LATRA_TEST_USER: root
-          LATRA_TEST_PASSWORD: synthetic-test-password
-          LATRA_TEST_ALLOW_RESET: '1'
-          LATRA_TEST_HTTP_URL: http://127.0.0.1:18777/
-        run: |
-          php -S 127.0.0.1:18777 tests/mock-latra.php > /tmp/latra-mock.log 2>&1 &
-          mock_pid=$!
-          trap 'kill "$mock_pid"' EXIT
-          for attempt in $(seq 1 30); do
-            if curl --silent --fail http://127.0.0.1:18777/ > /dev/null; then break; fi
-            sleep 1
-          done
-          php tests/http-delivery.php
       # Explicit DDL is checked twice so an interrupted/repeated upgrade can resume.
       - name: Verify index migration is repeatable
         env:
@@ -68,6 +51,15 @@ jobs:
         run: |
           php scripts/migrate-delivery.php
           php scripts/migrate-delivery.php
+      - name: Verify security and assistant persistence on disposable fixtures
+        env:
+          LATRA_TEST_DSN: mysql:host=127.0.0.1;port=3306;dbname=latra_test_delivery;charset=utf8mb4
+          LATRA_TEST_USER: root
+          LATRA_TEST_PASSWORD: synthetic-test-password
+          LATRA_TEST_ALLOW_RESET: '1'
+        run: |
+          php tests/security-persistence.php
+          php tests/assistant-persistence.php
   ingestion:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -92,7 +84,7 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
-          extensions: pdo_mysql, pdo_sqlite, mbstring
+          extensions: pdo_mysql, pdo_sqlite, curl, mbstring
           coverage: none
       - name: Verify isolated ingestion application orchestration
         run: |
@@ -104,8 +96,32 @@ jobs:
           php tests/ingestion-newest-message.php
           php tests/ingestion-trip-stats.php
           php tests/ingestion-device-status.php
+          php tests/emergency-events.php
           php tests/ingestion-domain-policies.php
           php tests/scheduled-poll.php
+          php tests/wialon-window.php
+          php tests/fleet-sync.php
+          php tests/relay-runtime-policy.php
+          php tests/scheduling.php
+          php tests/scheduling-repository.php
+          php tests/retention-usecase.php
+          php tests/database-boundary.php
+          php tests/maintenance-jobs.php
+          php tests/data-cleanup.php
+          php tests/operator-evidence.php
+          php tests/operator-fetch.php
+          php tests/operator-payload.php
+          php tests/monitoring-usecases.php
+          php tests/webhook-usecase.php
+          php tests/assistant-usecase.php
+          php tests/assistant-tools.php
+          php tests/assistant-provider.php
+          php tests/assistant-persistence.php
+          php tests/export-usecase.php
+          php tests/vault-usecase.php
+          php tests/auth-usecases.php
+          php tests/auth-native-session.php
+          php tests/security-persistence.php
           php tests/fuel-report-policy.php
       # Separate from the delivery fixture: this suite imports the real schema and kills its own workers.
       - name: Verify atomic ingestion, crash restart and unchanged eligibility

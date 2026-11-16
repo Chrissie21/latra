@@ -45,11 +45,12 @@ if (!is_dir(LOGS_DIR)) {
 }
 
 define('APP_ENV', envValue('APP_ENV', 'production'));
-// Relay is opt-in: flipping the default before migrations 009/010 and explicit vehicle enrollment
-// would make every unenrolled vehicle fail. Enable it per deployment after those steps.
-define('DELIVERY_ARCHITECTURE', envValue('DELIVERY_ARCHITECTURE', 'legacy'));
-if (!in_array(DELIVERY_ARCHITECTURE, ['relay', 'legacy'], true)) {
-    throw new RuntimeException('Unsupported delivery architecture');
+// Delivery is relay-only: the durable relay is the single LATRA delivery path.
+// The legacy direct-send mode was retired deliberately, so an explicit
+// unsupported value still fails closed instead of silently falling back.
+define('DELIVERY_ARCHITECTURE', envValue('DELIVERY_ARCHITECTURE', 'relay'));
+if (DELIVERY_ARCHITECTURE !== 'relay') {
+    throw new RuntimeException('Unsupported delivery architecture; relay delivery is the only supported mode');
 }
 
 // Error reporting: safe off-by-default, verbose only in development.
@@ -155,7 +156,7 @@ if (PHP_SAPI !== 'cli' && !headers_sent()) {
     }
 }
 
-// Hardened session bootstrap (shared by pages, api.php and login.php)
+// Hardened session bootstrap (shared by api.php and CLI-authenticated tooling)
 if (session_status() === PHP_SESSION_NONE) {
     session_name('LATRA_SID');
     session_set_cookie_params([

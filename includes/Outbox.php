@@ -41,7 +41,7 @@ class Outbox {
             foreach ($rows as $row) {
                 $cursor = (int) $row['id'];
                 $pdo = Database::getInstance();
-                $lock = Delivery::lockName($row['idempotency_key']);
+                $lock = self::lockName($row['idempotency_key']);
                 $stmt = $pdo->prepare('SELECT GET_LOCK(?, 0)');
                 $stmt->execute([$lock]);
                 if ((int) $stmt->fetchColumn() !== 1) continue;
@@ -56,6 +56,11 @@ class Outbox {
             }
         } while (count($rows) === 2000);
         return $recovered;
+    }
+
+    /** Keep lock names short and identical across workers and recovery. */
+    private static function lockName(string $key): string {
+        return 'latra-send-' . substr(hash('sha256', $key), 0, 48);
     }
 
     public static function retry(int $id): void {
