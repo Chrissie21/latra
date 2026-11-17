@@ -62,15 +62,17 @@ $source = [
         'mcc' => 0,
     ],
 ];
-$normalized = Normaliser::fromWialon($vehicle, $source);
+$normalized = \Latra\Domain\Ingestion\WialonMessageNormalizationPolicy::normalize(
+    $vehicle, $source, ParamResolver::resolve($source['p'], $vehicle['hw_type']),
+);
 if ($normalized['lat'] !== -6.12345679 || $normalized['lng'] !== 39.12345679
     || $normalized['speed'] !== 0.0 || $normalized['d2d3'] !== 2
     || $normalized['battery_pct'] !== 50.0 || $normalized['battery_mv'] !== null
     || $normalized['odometer'] !== 0.0 || $normalized['driver_id'] !== 'driver-7'
     || $normalized['canonical_params']['pwr_ext'] !== 0
-    || Normaliser::toMv('12.5') !== 12500.0
-    || Normaliser::toPct('150') !== 100.0) {
-    throw new RuntimeException('Legacy normalizer adapter changed canonical data or zero handling');
+    || \Latra\Domain\Ingestion\WialonMessageNormalizationPolicy::toMv('12.5') !== 12500.0
+    || \Latra\Domain\Ingestion\WialonMessageNormalizationPolicy::toPct('150') !== 100.0) {
+    throw new RuntimeException('Normalization policy changed canonical data or zero handling');
 }
 
 $valid = GpsValidator::validate($normalized);
@@ -83,20 +85,20 @@ if ($invalid['valid'] || GpsValidator::statusOf($invalid) !== 'failed'
     throw new RuntimeException('GPS validation ranges or error ordering changed');
 }
 
-$event = EventDetector::detect(['event' => 'battery_low']);
-if ($event['activity_id'] !== EventDetector::BATTERY_LOW
-    || EventDetector::engineState(['sensor' => 1], 'sensor') !== true
-    || EventDetector::flagOn(['status' => 2048], ['status:11']) !== true
-    || EventDetector::externalPowerState(['io_66' => 0]) !== false
-    || EventDetector::EVENT_MAP !== \Latra\Domain\Ingestion\ActivityDetectionPolicy::EVENT_MAP) {
+$event = \Latra\Domain\Ingestion\ActivityDetectionPolicy::detect(['event' => 'battery_low']);
+if ($event['activity_id'] !== \Latra\Domain\Ingestion\ActivityDetectionPolicy::BATTERY_LOW
+    || \Latra\Domain\Ingestion\ActivityDetectionPolicy::engineState(['sensor' => 1], 'sensor') !== true
+    || \Latra\Domain\Ingestion\ActivityDetectionPolicy::flagOn(['status' => 2048], ['status:11']) !== true
+    || \Latra\Domain\Ingestion\ActivityDetectionPolicy::externalPowerState(['io_66' => 0]) !== false
+) {
     throw new RuntimeException('Activity detection policy behavior or compatibility constants changed');
 }
-$transition = EventDetector::detect(
+$transition = \Latra\Domain\Ingestion\ActivityDetectionPolicy::detect(
     ['io_239' => 1],
     ['engine_status' => 'off'],
-    ['activity_enabled' => [EventDetector::ENGINE_ON => true], 'engine_param' => 'io_239'],
+    ['activity_enabled' => [\Latra\Domain\Ingestion\ActivityDetectionPolicy::ENGINE_ON => true], 'engine_param' => 'io_239'],
 );
-if ($transition['activity_id'] !== EventDetector::ENGINE_ON) {
+if ($transition['activity_id'] !== \Latra\Domain\Ingestion\ActivityDetectionPolicy::ENGINE_ON) {
     throw new RuntimeException('Engine transition decision changed');
 }
 

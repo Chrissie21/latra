@@ -36,6 +36,4 @@ class DeviceMonitor {
             new \Latra\Infrastructure\Ingestion\AuditDeviceStatusEffects(),
             new \Latra\Infrastructure\Ingestion\SystemDeviceStatusClock(), static fn(): int => time()))->run();
     }
-    public static function summary(): array { return self::repository()->deviceSummary(); }
-    public static function statusList(int $limit = 200): array { return self::repository()->deviceStatusList($limit); }
 }

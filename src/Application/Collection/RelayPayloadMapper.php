@@ -9,7 +9,7 @@ namespace Latra\Application\Collection;
 
 use InvalidArgumentException;
 use Latra\Domain\Collection\RelayEnrollmentPolicy;
-use Latra\Domain\Ingestion\ActivityDetectionPolicy as EventDetector;
+use Latra\Domain\Ingestion\ActivityDetectionPolicy;
 use Latra\Domain\Ingestion\GpsValidationPolicy as GpsValidator;
 use Latra\Domain\Ingestion\LatraPayloadPolicy;
 use Latra\Domain\Ingestion\ParameterResolutionPolicy;
@@ -56,42 +56,42 @@ final class RelayPayloadMapper {
         $voltage = [];
         if ($external !== null) $voltage['ext_power_voltage'] = (string) $external;
         if ($internal !== null) $voltage['int_battery_voltage'] = (string) $internal;
-        $activities = [EventDetector::MOVEMENT => true];
+        $activities = [ActivityDetectionPolicy::MOVEMENT => true];
         // Retain the existing detector's supported activity, alongside independent signal matches.
         // Zero voltage alone is not authoritative unplug evidence in this new path.
         $detectParams = $params;
         unset($detectParams['io_66'], $detectParams['pwr_ext'], $detectParams['ext_voltage'], $detectParams['io_66_power']);
-        $detected = EventDetector::detect($detectParams, $state, [
+        $detected = ActivityDetectionPolicy::detect($detectParams, $state, [
             'speed' => $message['speed'], 'activity_enabled' => $this->enabled,
             'speed_limit' => $this->speedLimit, 'engine_param' => $this->vehicle['engine_param'] ?? null,
         ]);
         $activity = (int) $detected['activity_id'];
         // Prefer the existing exact event-name mapping over a shorter substring (passenger_panic vs panic).
         $eventName = strtolower((string) ($params['event'] ?? ''));
-        if (isset(EventDetector::EVENT_MAP[$eventName])) $activity = EventDetector::EVENT_MAP[$eventName];
+        if (isset(ActivityDetectionPolicy::EVENT_MAP[$eventName])) $activity = ActivityDetectionPolicy::EVENT_MAP[$eventName];
         $over = $message['speed'] !== null && $message['speed'] > $this->speedLimit;
         $state['overspending_active'] = $over ? (int) ($state['overspending_active'] ?? 0) + 1 : 0;
-        if ($activity !== EventDetector::SPEEDING || $state['overspending_active'] >= $this->overspeedSamples) {
+        if ($activity !== ActivityDetectionPolicy::SPEEDING || $state['overspending_active'] >= $this->overspeedSamples) {
             $activities[$activity] = true;
         }
-        $engine = EventDetector::engineState($params, $this->vehicle['engine_param'] ?? null);
+        $engine = ActivityDetectionPolicy::engineState($params, $this->vehicle['engine_param'] ?? null);
         $priorEngine = $state['engine_status'] ?? null;
         if ($engine !== null) {
-            if ($priorEngine === 'off' && $engine) $activities[EventDetector::ENGINE_ON] = true;
-            if ($priorEngine === 'on' && !$engine) $activities[EventDetector::ENGINE_OFF] = true;
+            if ($priorEngine === 'off' && $engine) $activities[ActivityDetectionPolicy::ENGINE_ON] = true;
+            if ($priorEngine === 'on' && !$engine) $activities[ActivityDetectionPolicy::ENGINE_OFF] = true;
             $state['engine_status'] = $engine ? 'on' : 'off';
         }
         if ($fmb) {
             // Explicit FMB profile only: Teltonika enum 1=acceleration, 2=braking, 3=turning.
-            $driving = [1 => EventDetector::HASH_ACCEL, 2 => EventDetector::HASH_BRAKING, 3 => EventDetector::HASH_TURNING];
+            $driving = [1 => ActivityDetectionPolicy::HASH_ACCEL, 2 => ActivityDetectionPolicy::HASH_BRAKING, 3 => ActivityDetectionPolicy::HASH_TURNING];
             $code = $params['io_253'] ?? null;
             if ((is_int($code) || is_string($code)) && isset($driving[$code])) $activities[$driving[$code]] = true;
-            if (in_array($params['io_252'] ?? null, [1, '1'], true)) $activities[EventDetector::POWER_DISC] = true;
-            if (in_array($params['io_251'] ?? null, [1, '1'], true)) $activities[EventDetector::EXCESSIVE_IDLE] = true;
+            if (in_array($params['io_252'] ?? null, [1, '1'], true)) $activities[ActivityDetectionPolicy::POWER_DISC] = true;
+            if (in_array($params['io_251'] ?? null, [1, '1'], true)) $activities[ActivityDetectionPolicy::EXCESSIVE_IDLE] = true;
         }
         // Reuse the configured voltage rule; a zero/missing voltage is unknown, not low battery.
         if ($internal !== null && $internal > 0 && $internal * 1000 < $this->batteryLowMv) {
-            $activities[EventDetector::BATTERY_LOW] = true;
+            $activities[ActivityDetectionPolicy::BATTERY_LOW] = true;
         }
 
         // A compact trip accumulator replaces the successful-telemetry history dependency.
@@ -121,7 +121,7 @@ final class RelayPayloadMapper {
                 $state['momentary_at'][$id] = time();
             }
             $custom = [];
-            if ($id === EventDetector::ENGINE_OFF) {
+            if ($id === ActivityDetectionPolicy::ENGINE_OFF) {
                 // An initial engine-on baseline does not establish a trip start.
                 if ($trip === null) throw new RuntimeException('Engine-off trip baseline unavailable');
                 $custom = ['distance' => round($trip['distance'], 2),
@@ -133,7 +133,7 @@ final class RelayPayloadMapper {
             // All available voltage observations travel with the report, including ordinary movement.
             unset($addon['ext_power_voltage'], $addon['int_battery_voltage']);
             $addon = array_merge($addon, $voltage);
-            $fuel = $id === EventDetector::FUEL_REPORT ? LatraPayloadPolicy::buildFuelInfo($params) : [];
+            $fuel = $id === ActivityDetectionPolicy::FUEL_REPORT ? LatraPayloadPolicy::buildFuelInfo($params) : [];
             // Do not borrow the vehicle's latest GPS fix for a historical source report.
             $vehicle = array_intersect_key($this->vehicle, array_flip(['id', 'imei', 'vehicle_reg_no']));
             $one = LatraPayloadPolicy::buildPayload($vehicle, $message, $id, $addon, $fuel);

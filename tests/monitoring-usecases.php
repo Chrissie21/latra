@@ -24,8 +24,6 @@ $refresh=new RefreshGpsHealth($repo,$clock,static fn(): int => $now);
 healthAssert($refresh->run() === ['ok'=>1,'stale'=>2,'offline'=>1,'unknown'=>1], 'GPS threshold boundaries or active selection changed');
 $unknown=$pdo->query('SELECT * FROM gps_health WHERE vehicle_id=5')->fetch(PDO::FETCH_ASSOC);
 healthAssert((int)$unknown['last_gps_time']===0 && $unknown['minutes_since']===null && $unknown['status']==='unknown', 'Missing GPS source representation changed');
-healthAssert($repo->freshCount()===1 && $repo->gpsSummary()===['ok'=>1,'stale'=>2,'offline'=>1,'unknown'=>1]
-    && array_column($repo->staleVehicles(),'minutes_since')===[15,15,3], 'GPS summaries or stale ordering changed');
 $refresh->run(); healthAssert((int)$pdo->query('SELECT COUNT(*) FROM gps_health')->fetchColumn()===5, 'GPS update inserted duplicates');
 $pdo->exec("INSERT INTO device_status VALUES (1,1,99099,'old',NULL,0,0,0),(2,1,99100,'old',NULL,1,0,0),(3,1,NULL,'old',NULL,0,1,0),(4,0,1,'old',NULL,0,0,1)");
 $effects=new class($pdo) implements DeviceStatusEffects {
@@ -43,6 +41,4 @@ healthAssert($mark->run()===1 && $effects->events===[[1,'DEVICE_OFFLINE','Device
 $pdo->rollBack();
 healthAssert((int)$pdo->query('SELECT is_online FROM device_status WHERE vehicle_id=1')->fetchColumn()===1, 'Monitoring adapter escaped caller transaction');
 healthAssert($mark->run()===1 && $mark->run()===0, 'Offline transition repeated without a new heartbeat');
-healthAssert($repo->deviceSummary()===['online'=>2,'battery_low'=>1,'power_disconnected'=>1,'tampered'=>1,'total'=>4]
-    && count($repo->deviceStatusList(2))===2, 'Device summary or bounded status query changed');
 echo "PASS monitoring policies, missing evidence, threshold edges, persistence, transaction ownership and offline transitions\n";

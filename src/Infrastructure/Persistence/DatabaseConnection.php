@@ -105,5 +105,19 @@ abstract class DatabaseConnection {
             return false;
         }
     }
+
+    /** Bounded boot-time wait; a briefly unavailable database is not fatal. */
+    public static function await(int $attempts, int $delaySeconds): bool {
+        $attempts = max(1, $attempts);
+        for ($attempt = 1; $attempt <= $attempts; $attempt++) {
+            if (self::available()) {
+                return true;
+            }
+            if ($attempt < $attempts && $delaySeconds > 0) {
+                sleep($delaySeconds);
+            }
+        }
+        return false;
+    }
 }
 

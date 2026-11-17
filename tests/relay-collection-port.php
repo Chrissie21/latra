@@ -31,6 +31,7 @@ $repository = new class implements RelayCollectionRepository {
     {
         $this->calls[] = ['checkpoint', $unit, $through, $mappingState];
     }
+    public function status(string $unit): array { return ['progress' => null, 'queue' => []]; }
     public function commitWindow(): void { $this->calls[] = ['commit']; }
     public function rollbackWindow(): void { $this->calls[] = ['rollback']; }
 };

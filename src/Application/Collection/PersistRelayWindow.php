@@ -215,4 +215,10 @@ final class PersistRelayWindow implements RelayWindowCollector
             ($this->fault)($stage);
         }
     }
+
+    /** Payload-free progress and queue counts for operators. */
+    public function status(string $unit): array
+    {
+        return $this->repository->status($unit);
+    }
 }

@@ -4,16 +4,6 @@ require_once __DIR__ . "/autoload.php";
  * Scheduler.
  */
 class Scheduler {
-    public static function tick(bool $loopOnce = true): void {
-        Schema::ensure();
-        @file_put_contents(LOGS_DIR . '/last_tick.txt', date(DATE_FORMAT));
-
-        // Buckets run under their own lock so heavy background jobs can never
-        // starve the LATRA data submission cadence.
-        self::tickBuckets();
-        self::tickJobs();
-    }
-
     /** Compatibility entry points compose the scheduling use case on one database session. */
     public static function tickBuckets(): void { self::work()->buckets(); }
     public static function tickJobs(): void { self::work()->jobs(); }

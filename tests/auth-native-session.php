@@ -33,4 +33,18 @@ try {
     foreach (glob($dir . '/*') ?: [] as $path) unlink($path);
     rmdir($dir);
 }
+// The deleted UI left page guards and HTML helpers behind; only the API session/auth surface remains.
+foreach (['requireLogin', 'requireRole', 'requireView', 'csrfField', 'roleLabels', 'isAdmin',
+    'canView', 'isLatraRole', 'viewerPermissions', 'latraPermissions'] as $uiOnly) {
+    nativeAuthAssert(!method_exists('Auth', $uiOnly), 'UI-only Auth helper reintroduced: ' . $uiOnly);
+}
+foreach (['attempt', 'check', 'logout', 'user', 'role', 'canWrite', 'hasPermission',
+    'requireWrite', 'requirePermission', 'csrfToken', 'verifyCsrf', 'requireCsrf',
+    'audit', 'rateLimit', 'clientKey', 'logLoginAttempt', 'deviceExtra', 'ensureTables'] as $retained) {
+    nativeAuthAssert(method_exists('Auth', $retained), 'Retained Auth contract removed: ' . $retained);
+}
+foreach (['roleLabels', 'isLatraRole'] as $uiOnlyPolicy) {
+    nativeAuthAssert(!method_exists(Latra\Domain\Security\AccessPolicy::class, $uiOnlyPolicy),
+        'UI-only access-policy helper reintroduced: ' . $uiOnlyPolicy);
+}
 echo "PASS native session rotation/expiry, CSRF invalidation, Auth compatibility and authoritative login evidence\n";

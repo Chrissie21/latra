@@ -14,6 +14,8 @@ interface RelayCollectionRepository
     public function knownActivities(string $sourceKey): array;
     public function addActivityIdentity(string $sourceKey, int $activity, string $key): void;
     public function addPending(string $key, string $unit, int $time, string $body, string $status, ?string $error): void;
+    /** Payload-free progress and queue counts for one exact collection unit. */
+    public function status(string $unit): array;
     public function saveCheckpoint(string $unit, int $through, array $mappingState): void;
     public function commitWindow(): void;
     public function rollbackWindow(): void;

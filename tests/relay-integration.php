@@ -8,6 +8,7 @@ if (getenv('LATRA_RELAY_TEST_ALLOW_RESET') !== '1'
 }
 const DATE_FORMAT = 'Y-m-d H:i:s';
 require_once __DIR__ . '/../includes/autoload.php';
+use Latra\Application\Collection\RelayPayloadMapper as RelayMapper;
 $db = new PDO($dsn, getenv('LATRA_RELAY_TEST_USER') ?: 'root', getenv('LATRA_RELAY_TEST_PASSWORD') ?: '',
     [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
 if ($db->query('SELECT DATABASE()')->fetchColumn() !== $match[1]) throw new RuntimeException('Wrong database');

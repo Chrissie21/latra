@@ -2,7 +2,9 @@
 declare(strict_types=1);
 /** Offline capture/replay only. No application bootstrap, network client or delivery dependencies. */
 if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
-require_once __DIR__ . '/../includes/CollectionStore.php';
+require_once __DIR__ . '/../includes/autoload.php';
+
+use Latra\Infrastructure\Collection\CollectionStore;
 umask(0077);
 try {
     if ($argc !== 7 || $argv[1] !== 'capture-fixture') {

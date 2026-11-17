@@ -1,27 +1,25 @@
 <?php
 /** Temporary durable delivery intent, independent of message_log retention. */
-use Latra\Application\Delivery\DeliverPendingReport;
-use Latra\Application\Collection\RelayWindowCollector;
-use Latra\Application\Collection\RecoverRelayReviews;
 use Latra\Application\Collection\PersistRelayWindow;
+use Latra\Application\Collection\RecoverRelayReviews;
+use Latra\Application\Collection\RelayWindowCollector;
+use Latra\Application\Delivery\DeliverPendingReport;
 use Latra\Infrastructure\Persistence\PdoRelayCollectionRepository;
 use Latra\Infrastructure\Persistence\PdoRelayDeliveryRepository;
 use Latra\Infrastructure\Persistence\PdoRelayReviewRecoveryRepository;
 
 final class DurableRelay implements RelayWindowCollector {
-    private $fault;
-    private $backoff;
+    private ?Closure $fault;
     private DeliverPendingReport $delivery;
     private PersistRelayWindow $collection;
     private RecoverRelayReviews $reviewRecovery;
 
-    public function __construct(private PDO $db, private int $maxAttempts, callable $backoff,
-        private int $maxPendingRecords, private int $maxPendingBytes, ?callable $fault = null) {
+    public function __construct(PDO $db, int $maxAttempts, callable $backoff,
+        int $maxPendingRecords, int $maxPendingBytes, ?callable $fault = null) {
         if (min($maxAttempts, $maxPendingRecords, $maxPendingBytes) < 1) {
             throw new InvalidArgumentException('Explicit positive retry/capacity budgets required');
         }
-        $this->backoff = $backoff;
-        $this->fault = $fault;
+        $this->fault = $fault === null ? null : Closure::fromCallable($fault);
         $this->collection = new PersistRelayWindow(
             new PdoRelayCollectionRepository($db),
             $maxPendingRecords,
@@ -39,14 +37,8 @@ final class DurableRelay implements RelayWindowCollector {
         );
     }
 
-    private function run(string $sql, array $values = []): PDOStatement {
-        $stmt = $this->db->prepare($sql);
-        $stmt->execute($values);
-        return $stmt;
-    }
-
     private function hit(string $stage): void {
-        if ($this->fault) ($this->fault)($stage);
+        if ($this->fault !== null) ($this->fault)($stage);
     }
 
     /** A complete bounded window, queue intent and collection watermark commit together. */
@@ -72,10 +64,7 @@ final class DurableRelay implements RelayWindowCollector {
 
     /** Payload-free progress and queue counts for operators. */
     public function status(string $unit): array {
-        $row = $this->run('SELECT collected_through, delivered_time, attempted_time FROM relay_units WHERE unit=?', [$unit])->fetch(PDO::FETCH_ASSOC);
-        $counts = $this->run("SELECT COUNT(*) AS unresolved, COALESCE(SUM(status='review'),0) AS review,
-            COALESCE(SUM(OCTET_LENGTH(payload)),0) AS bytes FROM relay_pending WHERE unit=?", [$unit])->fetch(PDO::FETCH_ASSOC);
-        return ['progress' => $row ?: null, 'queue' => $counts];
+        return $this->collection->status($unit);
     }
 
     /** Explicitly revalidate safe, never-attempted mapping-review evidence for one vehicle. */

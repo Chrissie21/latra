@@ -1,6 +1,9 @@
 <?php
+namespace Latra\Infrastructure\Delivery;
+
+use InvalidArgumentException;
 /** Pilot transport deliberately has no route to a real LATRA endpoint or credentials. */
-final class RelayMockTransport {
+final class LoopbackRelayTransport {
     public function __construct(private string $url) {
         if (!preg_match('#^http://127\.0\.0\.1:([0-9]{1,5})/$#D', $url, $match)
             || (int) $match[1] < 1 || (int) $match[1] > 65535) {

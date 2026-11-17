@@ -7,7 +7,6 @@
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/../includes/Database.php';
 require_once __DIR__ . '/../includes/Auth.php';
-require_once __DIR__ . '/../includes/Automation.php';
 
 if (PHP_SAPI !== 'cli') {
     http_response_code(404);
@@ -38,28 +37,11 @@ Schema::ensure();
 
 $username = $argv[1] ?? 'admin';
 $password = $argv[2] ?? bin2hex(random_bytes(8));
-$algo = defined('PASSWORD_ARGON2ID') ? PASSWORD_ARGON2ID : PASSWORD_DEFAULT;
-$hash = password_hash($password, $algo);
-$exists = Database::fetch('SELECT id FROM app_users WHERE username = ?', [$username]);
-if ($exists) {
-    Database::update('app_users', [
-        'password_hash' => $hash,
-        'is_active' => 1,
-        'role' => 'admin',
-        'failed_logins' => 0,
-        'locked_until' => null,
-    ], 'id = ?', [(int) $exists['id']]);
-    echo "Updated admin '{$username}'.\n";
-} else {
-    Database::insert('app_users', [
-        'username' => $username,
-        'password_hash' => $hash,
-        'display_name' => ucfirst($username),
-        'role' => 'admin',
-        'is_active' => 1,
-    ]);
-    echo "Created admin '{$username}'.\n";
-}
+$updated = (new \Latra\Application\Security\ProvisionOperatorAccount(
+    new \Latra\Infrastructure\Persistence\PdoOperatorAccountRepository(Database::getInstance()),
+    new \Latra\Infrastructure\Security\NativePasswordHasher(),
+))->provision($username, $password, ['role' => 'admin', 'reset_lockout' => true]);
+echo $updated ? "Updated admin '{$username}'.\n" : "Created admin '{$username}'.\n";
 echo "Password: {$password}\n";
 echo "Start the worker: php bin/worker.php\n";
 echo "Or install systemd: sudo cp scripts/latra-worker.service /etc/systemd/system/ && sudo systemctl enable --now latra-worker\n";

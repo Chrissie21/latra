@@ -45,6 +45,33 @@ final class PdoEmergencyEventRepository implements EmergencyEventRepository
         return $event === false ? null : $event;
     }
 
+    public function activeIdsByType(int $vehicleId, string $eventType): array
+    {
+        $statement = $this->pdo->prepare(
+            "SELECT id FROM emergency_events
+             WHERE vehicle_id = ? AND event_type = ? AND status = 'active'"
+        );
+        $statement->execute([$vehicleId, $eventType]);
+        return array_map(static fn($id): int => (int) $id, array_column($statement->fetchAll(PDO::FETCH_ASSOC), 'id'));
+    }
+
+    public function activeCount(): int
+    {
+        $statement = $this->pdo->query("SELECT COUNT(*) FROM emergency_events WHERE status = 'active'");
+        return (int) $statement->fetchColumn();
+    }
+
+    public function recent(int $limit): array
+    {
+        $statement = $this->pdo->prepare(
+            'SELECT e.*, v.vehicle_reg_no FROM emergency_events e
+             JOIN vehicles v ON v.id = e.vehicle_id
+             ORDER BY e.started_at DESC LIMIT ' . max(1, $limit)
+        );
+        $statement->execute();
+        return $statement->fetchAll(PDO::FETCH_ASSOC);
+    }
+
     public function findById(int $eventId): ?array
     {
         $statement = $this->pdo->prepare('SELECT * FROM emergency_events WHERE id = ?');

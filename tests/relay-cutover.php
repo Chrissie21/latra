@@ -40,10 +40,7 @@ class RelayRuntime {
 }
 require __DIR__ . '/../includes/FleetSync.php';
 require __DIR__ . '/../includes/BucketRunner.php';
-require __DIR__ . '/../includes/EventEngine.php';
 require __DIR__ . '/../includes/Scheduler.php';
-require __DIR__ . '/../includes/IngestPipeline.php';
-require __DIR__ . '/../includes/Automation.php';
 require __DIR__ . '/../includes/EmergencyHandler.php';
 function expect(bool $ok, string $why): void { if (!$ok) throw new RuntimeException($why); }
 class Database {
@@ -85,7 +82,6 @@ class Vault {
     public static function wialonUrl(): string { return ''; }
     public static function wialonToken(): string { return ''; }
 }
-class EventDetector { public const FUEL_REPORT = 16; }
 require __DIR__ . '/../includes/LatraMapper.php';
 class Logger {
     public static function info(...$args): void {}
@@ -93,7 +89,7 @@ class Logger {
 }
 expect(FleetSync::pollVehicle(['id' => 1], 180, 80)['inserted'] === 2, 'Scheduled polling bypassed the relay');
 expect(BucketRunner::run(['id' => 4])['inserted'] === 2, 'Bucket entered retained-source pipeline');
-expect(EventEngine::runCycle()['vehicles'] === 1, 'Event engine entered retained-source pipeline');
+expect(RelayRuntime::cycle()['vehicles'] === 1, 'Event engine entered retained-source pipeline');
 $flush = new ReflectionMethod(Scheduler::class, 'jobFlush');
 expect($flush->invoke(null, false) === 2 && $flush->invoke(null, true) === 2, 'Flush bypassed the relay');
 expect(in_array(['flush', 80, false, 120], RelayRuntime::$calls, true)
@@ -126,12 +122,11 @@ try {
 WialonAPI::$failLogin = false;
 expect($loginFailed, 'Fuel-report Wialon login failure was not surfaced');
 echo "PASS missing position is skipped without fabricating data and Wialon login errors are surfaced\n";
-foreach ([static fn() => IngestPipeline::ingestVehicle(['id' => 1], []),
-    static fn() => Automation::storeMessage(['vehicle_id' => 1])] as $oldWrite) {
-    try { $oldWrite(); throw new LogicException('Legacy source write remained active'); }
-    catch (RuntimeException $error) { expect(str_contains($error->getMessage(), 'relay'), 'Wrong legacy-write guard'); }
+foreach (['IngestPipeline', 'Outbox'] as $legacyAdapter) {
+    expect(!is_file(__DIR__ . '/../includes/' . $legacyAdapter . '.php'),
+        'Legacy direct-delivery adapter reintroduced: ' . $legacyAdapter);
 }
-echo "PASS relay mode refuses incomplete legacy ingestion and retained-source write bypasses\n";
+echo "PASS relay mode has no direct retained-source write path\n";
 
 $emergencyMismatch = EmergencyHandler::pushPayload([
     'vehicle_reg_no' => 'WRONG-PLATE',

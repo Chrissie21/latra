@@ -13,18 +13,6 @@ parameters:
 			path: bin/worker.php
 
 		-
-			message: '#^Property DurableRelay\:\:\$backoff is never read, only written\.$#'
-			identifier: property.onlyWritten
-			count: 1
-			path: includes/DurableRelay.php
-
-		-
-			message: '#^Offset 2\|3\|4\|5\|6\|7\|8\|9\|10\|11\|12\|13\|14\|15\|16\|17\|18\|19\|20\|21\|22\|23\|24 on array\{1\: ''movement'', 2\: ''engine_on'', 3\: ''engine_off'', 4\: ''speeding'', 5\: ''hard_braking'', 6\: ''hard_turning'', 7\: ''hard_acceleration'', 8\: ''panic_driver'', \.\.\.\} on left side of \?\? always exists and is not nullable\.$#'
-			identifier: nullCoalesce.offset
-			count: 1
-			path: includes/EventEngine.php
-
-		-
 			message: '#^Constant WIALON_BASE_URL not found\.$#'
 			identifier: constant.notFound
 			count: 1

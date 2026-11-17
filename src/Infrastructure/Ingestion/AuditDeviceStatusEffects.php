@@ -9,7 +9,7 @@ final class AuditDeviceStatusEffects implements DeviceStatusEffects
 {
     public function recordTransition(int $vehicleId, string $type, string $detail): void
     {
-        \Automation::log('device.status_change', [
+        \Latra\Infrastructure\Logging\AutomationLog::write('device.status_change', [
             'vehicle' => $vehicleId,
             'type' => $type,
             'detail' => $detail,
@@ -21,7 +21,7 @@ final class AuditDeviceStatusEffects implements DeviceStatusEffects
 
     public function statusChanged(int $vehicleId, array $status): void
     {
-        \Automation::log('device.status', [
+        \Latra\Infrastructure\Logging\AutomationLog::write('device.status', [
             'vehicle' => $vehicleId,
             'online' => $status['is_online'],
             'battery_low' => $status['internal_battery_low'],

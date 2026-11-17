@@ -1,13 +1,10 @@
-
 <?php
 
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/../includes/Database.php';
 require_once __DIR__ . '/../includes/WialonAPI.php';
 require_once __DIR__ . '/../includes/LatraMapper.php';
-require_once __DIR__ . '/../includes/Automation.php';
 require_once __DIR__ . '/../includes/GpsValidator.php';
-require_once __DIR__ . '/../includes/EventDetector.php';
 require_once __DIR__ . '/../includes/GpsMonitor.php';
 require_once __DIR__ . '/../includes/DeviceMonitor.php';
 require_once __DIR__ . '/../includes/EmergencyHandler.php';
@@ -21,8 +18,8 @@ if (function_exists('pcntl_async_signals')) {
 Schema::ensure();
 fwrite(STDOUT, "[" . date(DATE_FORMAT) . "] worker started pid=" . getmypid() . "\n");
 
-// Keep the original 15-second cadence without requiring an exact wall-clock match.
-$nextJobsAt = hrtime(true) + 15 * 1_000_000_000;
+$cadence = new \Latra\Application\Scheduling\WorkerCadence();
+$nextJobsAt = hrtime(true) + $cadence->jobIntervalNanos();
 while (true) {
     try {
         Scheduler::tickBuckets();
@@ -31,17 +28,15 @@ while (true) {
         Logger::error('worker.bucket_tick', ['error' => $e->getMessage()]);
     }
     try {
-        EventEngine::runCycle();
+        RelayRuntime::cycle();
     } catch (Throwable $e) {
         fwrite(STDERR, "[" . date(DATE_FORMAT) . "] event engine error: " . $e->getMessage() . "\n");
         Logger::error('worker.event_engine', ['error' => $e->getMessage()]);
     }
-    $active = Database::fetch("SELECT COUNT(*) AS c FROM emergency_events WHERE status = 'active'");
-    $speed = ((int) ($active['c'] ?? 0) > 0) ? 2 : 5;
-    sleep($speed);
+    sleep($cadence->sleepSeconds(EmergencyHandler::activeCount()));
 
     if (hrtime(true) >= $nextJobsAt) {
-        $nextJobsAt = hrtime(true) + 15 * 1_000_000_000;
+        $nextJobsAt = hrtime(true) + $cadence->jobIntervalNanos();
         try {
             Scheduler::tickJobs();
         } catch (Throwable $e) {

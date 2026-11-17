@@ -1,7 +1,16 @@
 <?php
 declare(strict_types=1);
+
+namespace Latra\Infrastructure\Collection;
+
+use Generator;
+use InvalidArgumentException;
+use PDO;
+use RuntimeException;
+use Throwable;
+
 /** Separate, explicitly supplied SQLite store. Never loads app config, queues or workers. */
-class CollectionStore {
+final class CollectionStore {
     public function __construct(private PDO $pdo) {
         if ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) !== 'sqlite' || $pdo->inTransaction()) {
             throw new InvalidArgumentException('Collection requires a dedicated SQLite connection');

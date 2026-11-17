@@ -4,7 +4,7 @@ if (PHP_SAPI !== 'cli') exit(1);
 $root = sys_get_temp_dir() . '/latra-relay-api-' . bin2hex(random_bytes(6));
 mkdir($root, 0700); mkdir($root . '/includes', 0700);
 copy(__DIR__ . '/../api.php', $root . '/api.php');
-foreach (['Database','WialonAPI','LatraMapper','Auth','Automation','GpsValidator','EventDetector','EmergencyHandler','DeviceMonitor','DataCleaner'] as $class) {
+foreach (['Database','WialonAPI','LatraMapper','Auth','GpsValidator','EmergencyHandler','DeviceMonitor','DataCleaner'] as $class) {
     file_put_contents($root . '/includes/' . $class . '.php', '<?php');
 }
 $config = <<<'PHP'
@@ -59,7 +59,6 @@ class FleetSync {
     public static function syncOne(int $id): void { if ($id!==1) throw new RuntimeException('Vehicle not found'); }
 }
 class WialonAPI { public function __construct() { throw new RuntimeException('Legacy source bypass'); } }
-class EventDetector { public const ENGINE_OFF = 3; }
 class RelayRuntime {
     public static function enabled(): bool { return getenv('API_RELAY_DISABLED') !== '1'; }
     public static function queueForVehicle(array $payload, ?int $vehicleId = null): array {

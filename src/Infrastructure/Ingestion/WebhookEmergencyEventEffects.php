@@ -13,7 +13,7 @@ final class WebhookEmergencyEventEffects implements EmergencyEventEffects
 {
     public function started(array $event): void
     {
-        \Automation::log('emergency.start', [
+        \Latra\Infrastructure\Logging\AutomationLog::write('emergency.start', [
             'event' => $event['event_id'],
             'vehicle' => (int) $event['vehicle_id'],
             'type' => $event['event_type'],
@@ -27,7 +27,7 @@ final class WebhookEmergencyEventEffects implements EmergencyEventEffects
 
     public function ended(array $event): void
     {
-        \Automation::log('emergency.end', [
+        \Latra\Infrastructure\Logging\AutomationLog::write('emergency.end', [
             'event' => $event['event_id'],
             'vehicle' => (int) $event['vehicle_id'],
             'type' => $event['event_type'],

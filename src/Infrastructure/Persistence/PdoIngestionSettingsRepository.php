@@ -15,15 +15,6 @@ final class PdoIngestionSettingsRepository
         $statement->execute($values);
         return $statement->fetchAll(PDO::FETCH_ASSOC);
     }
-    public function activityAllowed(int $activity): bool
-    {
-        return $this->rows('SELECT id FROM automation_buckets WHERE is_enabled=1 AND activity_id=?', [$activity]) !== [];
-    }
-    public function enabledBucketVehicleIds(): array
-    {
-        return array_map('intval', array_column($this->rows('SELECT DISTINCT bv.vehicle_id FROM bucket_vehicles bv
-            JOIN automation_buckets b ON b.id=bv.bucket_id AND b.is_enabled=1'), 'vehicle_id'));
-    }
     public function speedLimit(int $vehicleId): float
     {
         $rows = $this->rows('SELECT speed_limit_kmh FROM overspeed_config WHERE vehicle_id=? AND is_enabled=1', [$vehicleId]);

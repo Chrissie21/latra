@@ -77,6 +77,20 @@ final class PdoRelayCollectionRepository implements RelayCollectionRepository
             [$through, json_encode($mappingState, JSON_THROW_ON_ERROR), $unit]);
     }
 
+    public function status(string $unit): array
+    {
+        $progress = $this->run(
+            'SELECT collected_through, delivered_time, attempted_time FROM relay_units WHERE unit=?',
+            [$unit],
+        )->fetch(PDO::FETCH_ASSOC);
+        $counts = $this->run(
+            "SELECT COUNT(*) AS unresolved, COALESCE(SUM(status='review'),0) AS review,
+                COALESCE(SUM(OCTET_LENGTH(payload)),0) AS bytes FROM relay_pending WHERE unit=?",
+            [$unit],
+        )->fetch(PDO::FETCH_ASSOC);
+        return ['progress' => $progress === false ? null : $progress, 'queue' => $counts];
+    }
+
     public function commitWindow(): void { $this->database->commit(); }
 
     public function rollbackWindow(): void

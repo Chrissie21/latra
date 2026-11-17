@@ -2,7 +2,9 @@
 declare(strict_types=1);
 /** Offline SQLite contract. No application bootstrap, live dump, secrets or outbound clients. */
 if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
-require_once __DIR__ . '/../includes/CollectionStore.php';
+require_once __DIR__ . '/../includes/autoload.php';
+
+use Latra\Infrastructure\Collection\CollectionStore;
 umask(0077);
 function check(bool $condition, string $message): void {
     if (!$condition) throw new RuntimeException($message);

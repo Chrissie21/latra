@@ -35,6 +35,37 @@ final class PdoRelayRuntimeRepository implements RelayRuntimeRepository
 
     public function enabledEventActivities(): array
     {
+        return $this->enabledEventActivityIds();
+    }
+
+    public function relaySettings(int $vehicleId): ?array
+    {
+        $row = $this->run(
+            'SELECT * FROM relay_vehicle_settings WHERE vehicle_id=? AND is_enabled=1',
+            [$vehicleId],
+        )->fetch(PDO::FETCH_ASSOC);
+        return $row === false ? null : $row;
+    }
+
+    public function relayStatus(string $unit): array
+    {
+        $wildcard = $unit . ':%';
+        $streams = $this->run(
+            'SELECT unit,collected_through,delivered_time,attempted_time FROM relay_units
+             WHERE unit=? OR unit LIKE ? ORDER BY unit',
+            [$unit, $wildcard],
+        )->fetchAll(PDO::FETCH_ASSOC);
+        $counts = $this->run(
+            "SELECT COUNT(*) AS unresolved,COALESCE(SUM(status='review'),0) AS review,
+                COALESCE(SUM(OCTET_LENGTH(payload)),0) AS bytes FROM relay_pending
+             WHERE unit=? OR unit LIKE ?",
+            [$unit, $wildcard],
+        )->fetch(PDO::FETCH_ASSOC) ?: [];
+        return ['streams' => $streams, 'queue' => array_map('intval', $counts)];
+    }
+
+    public function enabledEventActivityIds(): array
+    {
         return array_map(
             'intval',
             array_column($this->run(
@@ -42,6 +73,63 @@ final class PdoRelayRuntimeRepository implements RelayRuntimeRepository
                  WHERE activity_id<>1 AND is_enabled=1',
             )->fetchAll(PDO::FETCH_ASSOC), 'activity_id'),
         );
+    }
+
+    public function allowedBucketActivities(int $vehicleId): array
+    {
+        return array_map(
+            'intval',
+            array_column($this->run(
+                'SELECT DISTINCT b.activity_id FROM automation_buckets b
+                 JOIN bucket_vehicles bv ON bv.bucket_id=b.id
+                 WHERE b.is_enabled=1 AND bv.vehicle_id=?',
+                [$vehicleId],
+            )->fetchAll(PDO::FETCH_ASSOC), 'activity_id'),
+        );
+    }
+
+    public function pendingUnits(int $now, int $limit): array
+    {
+        return $this->run(
+            "SELECT DISTINCT p.unit FROM relay_pending p
+             WHERE p.status='pending' AND p.next_attempt<=? ORDER BY p.unit LIMIT " . max(1, $limit),
+            [$now],
+        )->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    public function activeVehicleForUnit(int $unitId): ?array
+    {
+        $row = $this->run(
+            'SELECT * FROM vehicles WHERE wialon_unit_id=? AND is_active=1',
+            [$unitId],
+        )->fetch(PDO::FETCH_ASSOC);
+        return $row === false ? null : $row;
+    }
+
+    public function vehicle(int $vehicleId): ?array
+    {
+        $row = $this->run('SELECT * FROM vehicles WHERE id = ? LIMIT 1', [$vehicleId])->fetch(PDO::FETCH_ASSOC);
+        return $row === false ? null : $row;
+    }
+
+    public function vehicleByIdentity(?string $vehicleRegNo, ?string $imei): ?array
+    {
+        $clauses = [];
+        $parameters = [];
+        if ($vehicleRegNo !== null) {
+            $clauses[] = 'vehicle_reg_no = ?';
+            $parameters[] = $vehicleRegNo;
+        }
+        if ($imei !== null) {
+            $clauses[] = 'imei = ?';
+            $parameters[] = $imei;
+        }
+        if ($clauses === []) return null;
+        $row = $this->run(
+            'SELECT * FROM vehicles WHERE ' . implode(' OR ', $clauses) . ' LIMIT 1',
+            $parameters,
+        )->fetch(PDO::FETCH_ASSOC);
+        return $row === false ? null : $row;
     }
 
     private function run(string $sql, array $parameters = []): PDOStatement

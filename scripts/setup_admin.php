@@ -26,20 +26,11 @@ if ($password === '') {
     $generated = true;
 }
 
-$hash = password_hash($password, PASSWORD_DEFAULT);
-$exists = Database::fetch('SELECT id FROM app_users WHERE username = ?', [$username]);
-if ($exists) {
-    Database::update('app_users', ['password_hash' => $hash, 'is_active' => 1], 'id = ?', [(int) $exists['id']]);
-    echo "Account '{$username}' updated.\n";
-} else {
-    Database::insert('app_users', [
-        'username' => $username,
-        'password_hash' => $hash,
-        'display_name' => ucfirst($username),
-        'is_active' => 1,
-    ]);
-    echo "Account '{$username}' created.\n";
-}
+$updated = (new \Latra\Application\Security\ProvisionOperatorAccount(
+    new \Latra\Infrastructure\Persistence\PdoOperatorAccountRepository(Database::getInstance()),
+    new \Latra\Infrastructure\Security\NativePasswordHasher(),
+))->provision($username, $password);
+echo $updated ? "Account '{$username}' updated.\n" : "Account '{$username}' created.\n";
 
 if ($generated) {
     echo "Generated password: {$password}\n";

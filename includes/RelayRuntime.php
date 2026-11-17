@@ -6,12 +6,17 @@ use Latra\Application\Collection\CollectRelayBucket;
 use Latra\Application\Collection\CollectRelayEventCycle;
 use Latra\Domain\Collection\RelayDeliveryGatePolicy;
 use Latra\Domain\Collection\RelayIdentityPolicy;
+use Latra\Infrastructure\Persistence\PdoIngestionSettingsRepository;
 use Latra\Infrastructure\Persistence\PdoRelayEnrollmentRepository;
 use Latra\Infrastructure\Persistence\PdoRelayRuntimeRepository;
 
 final class RelayRuntime {
     public static function enabled(): bool {
         return defined('DELIVERY_ARCHITECTURE') && DELIVERY_ARCHITECTURE === 'relay';
+    }
+
+    private static function repository(): PdoRelayRuntimeRepository {
+        return new PdoRelayRuntimeRepository(Database::getInstance());
     }
 
     public static function settings(int $vehicleId): array {
@@ -22,15 +27,20 @@ final class RelayRuntime {
 
     /** Enrolled settings, or null so iteration can skip instead of aborting the whole run. */
     public static function settingsOrNull(int $vehicleId): ?array {
-        $row = Database::fetch('SELECT * FROM relay_vehicle_settings WHERE vehicle_id=? AND is_enabled=1', [$vehicleId]);
-        if (!$row) return null;
+        $row = self::repository()->relaySettings($vehicleId);
+        if ($row === null) return null;
         RelayIdentityPolicy::assertBudgets($row);
         return $row;
     }
 
+    /** Activity ids enabled for a vehicle's automation buckets (CLI/manual collection scope). */
+    public static function allowedActivities(int $vehicleId): array {
+        return self::repository()->allowedBucketActivities($vehicleId);
+    }
+
     private static function queue(array $settings): DurableRelay {
         return new DurableRelay(Database::getInstance(), Schema::configInt('outbox_max_tries', 8),
-            static fn(int $attempt): int => min(900, Automation::nextBackoff($attempt)),
+            static fn(int $attempt): int => min(900, \Latra\Domain\Scheduling\RetryBackoffPolicy::next($attempt)),
             (int) $settings['max_pending_records'], (int) $settings['max_pending_bytes']);
     }
 
@@ -43,11 +53,8 @@ final class RelayRuntime {
     /** Payload-free operator status includes each independent collection stream. */
     public static function status(array $vehicle): array {
         $settings = self::settings((int) $vehicle['id']);
-        $unit = 'wialon:' . $vehicle['wialon_unit_id'];
-        $streams = Database::fetchAll('SELECT unit,collected_through,delivered_time,attempted_time FROM relay_units WHERE unit=? OR unit LIKE ? ORDER BY unit', [$unit, $unit . ':%']);
-        $counts = Database::fetch("SELECT COUNT(*) AS unresolved,COALESCE(SUM(status='review'),0) AS review,
-            COALESCE(SUM(OCTET_LENGTH(payload)),0) AS bytes FROM relay_pending WHERE unit=? OR unit LIKE ?", [$unit, $unit . ':%']);
-        return ['profile' => $settings['profile'], 'streams' => $streams, 'queue' => array_map('intval', $counts)];
+        $status = self::repository()->relayStatus('wialon:' . $vehicle['wialon_unit_id']);
+        return ['profile' => $settings['profile'], 'streams' => $status['streams'], 'queue' => $status['queue']];
     }
 
     /** Operator-triggered recovery uses current identity and mapping policy without fetching source data. */
@@ -55,33 +62,31 @@ final class RelayRuntime {
         $settings = self::settings((int) $vehicle['id']);
         $vehicleUnit = 'wialon:' . $vehicle['wialon_unit_id'];
         $queue = self::queue($settings);
-        $map = static function (array $source, string $unit) use ($vehicle, $settings, $vehicleUnit): array {
-            $stream = substr($unit, strlen($vehicleUnit));
-            $events = $stream === ':events';
-            if ($events) {
-                $allowed = array_map('intval', array_column(Database::fetchAll(
-                    'SELECT DISTINCT activity_id FROM wialon_event_map WHERE activity_id<>1 AND is_enabled=1'), 'activity_id'));
-            } elseif (preg_match('/^:activity:([0-9]+)$/D', $stream, $match)) {
-                $allowed = [(int) $match[1]];
-            } elseif ($stream === ':poll') {
-                $allowed = self::allowed((int) $vehicle['id']);
-            } else {
-                throw new RuntimeException('Unsupported collection stream for automatic recovery');
-            }
-            return self::mapper($vehicle, $settings, $allowed, $events)->map($source, []);
-        };
-        return $queue->recoverReviews($vehicleUnit, $map);
+        $map = new \Latra\Application\Collection\MapRelayReview(
+            $vehicleUnit,
+            static fn(): array => self::repository()->enabledEventActivityIds(),
+            static fn(): array => self::allowed((int) $vehicle['id']),
+            static fn(array $source, array $allowed, bool $events): array =>
+                self::mapper($vehicle, $settings, $allowed, $events)->map($source, []),
+        );
+        return $queue->recoverReviews($vehicleUnit, [$map, 'map']);
     }
 
     private static function allowed(int $vehicleId): array {
-        $rows = Database::fetchAll('SELECT DISTINCT b.activity_id FROM automation_buckets b
-            JOIN bucket_vehicles bv ON bv.bucket_id=b.id WHERE b.is_enabled=1 AND bv.vehicle_id=?', [$vehicleId]);
-        return array_map('intval', array_column($rows, 'activity_id'));
+        return self::repository()->allowedBucketActivities($vehicleId);
+    }
+
+    /** Ingestion configuration (activity gates, speed limit) for payload mapping. */
+    private static function ingestionSettings(): PdoIngestionSettingsRepository {
+        return new PdoIngestionSettingsRepository(Database::getInstance());
     }
 
     private static function mapper(array $vehicle, array $settings, array $allowed, bool $events): RelayPayloadMapper {
-        return new RelayPayloadMapper($vehicle, EventDetector::enabledActivities((int) $vehicle['id']), $allowed,
-            IngestPipeline::speedLimit($vehicle), Schema::configInt('overspeed_consecutive', 2),
+        $ingestion = self::ingestionSettings();
+        return new RelayPayloadMapper($vehicle, $ingestion->enabledActivities((int) $vehicle['id']), $allowed,
+            !empty($vehicle['speed_limit_kmh']) ? (float) $vehicle['speed_limit_kmh']
+                : $ingestion->speedLimit((int) $vehicle['id']),
+            Schema::configInt('overspeed_consecutive', 2),
             Schema::configInt('battery_low_mv', 3200), $settings['profile'],
             $events ? max(0, Schema::configInt('event_engine_cooldown_seconds', 300)) : 0,
             ParamResolver::enabledAliases());
@@ -146,23 +151,20 @@ final class RelayRuntime {
     public static function flush(int $limit, bool $emergencyOnly, int $seconds): int {
         $url = Schema::config('relay_mock_url', '');
         if ($url === '') return 0;
-        $transport = new RelayMockTransport($url);
+        $transport = new \Latra\Infrastructure\Delivery\LoopbackRelayTransport($url);
         $activeUnit = null;
         $activeVehicle = null;
         $findVehicle = static function (string $unit) use (&$activeUnit, &$activeVehicle): ?array {
             if ($activeUnit !== $unit) {
                 $activeUnit = $unit;
                 $unitVehicleId = RelayIdentityPolicy::unitVehicleId($unit);
-                $activeVehicle = $unitVehicleId === null ? null : Database::fetch(
-                    'SELECT * FROM vehicles WHERE wialon_unit_id=? AND is_active=1',
-                    [$unitVehicleId]
-                );
+                $activeVehicle = $unitVehicleId === null ? null
+                    : self::repository()->activeVehicleForUnit($unitVehicleId);
             }
             return $activeVehicle;
         };
         $flush = new \Latra\Application\Delivery\FlushPendingRelayReports(
-            static fn(int $now): array => Database::fetchAll("SELECT DISTINCT p.unit FROM relay_pending p
-                WHERE p.status='pending' AND p.next_attempt<=? ORDER BY p.unit LIMIT 200", [$now]),
+            static fn(int $now): array => self::repository()->pendingUnits($now, 200),
             static function (string $unit, int $now, callable $send, callable $canSend) use (
                 $findVehicle,
                 &$activeUnit,
@@ -187,11 +189,10 @@ final class RelayRuntime {
             static function (string $unit, array $pending) use ($findVehicle): bool {
                 $vehicle = $findVehicle($unit);
                 if (!$vehicle) return false;
-                $enabled = EventDetector::enabledActivities((int) $vehicle['id']);
+                $enabled = self::ingestionSettings()->enabledActivities((int) $vehicle['id']);
                 $allowed = self::allowed((int) $vehicle['id']);
                 if (str_ends_with($unit, ':events') && Schema::config('event_engine_enabled', '1') === '1') {
-                    $allowed = array_map('intval', array_column(Database::fetchAll(
-                        'SELECT DISTINCT activity_id FROM wialon_event_map WHERE activity_id<>1 AND is_enabled=1'), 'activity_id'));
+                    $allowed = self::repository()->enabledEventActivityIds();
                 }
                 $activityIds = RelayDeliveryGatePolicy::activityIds($pending['payload']);
                 return RelayDeliveryGatePolicy::allows($enabled, $allowed, $activityIds);
@@ -204,26 +205,13 @@ final class RelayRuntime {
 
     /** Resolve the exact owning vehicle before any relay intent is enqueued. */
     public static function queueForVehicle(array $payload, ?int $vehicleId = null): array {
-        $vehicle = null;
-        if ($vehicleId !== null) {
-            $vehicle = Database::fetch('SELECT * FROM vehicles WHERE id = ? LIMIT 1', [(int) $vehicleId]);
-        }
+        $repository = self::repository();
+        $vehicle = $vehicleId === null ? null : $repository->vehicle((int) $vehicleId);
         if (!$vehicle) {
-            $vehicleReg = $payload['vehicle_reg_no'] ?? null;
-            $imei = $payload['imei'] ?? null;
-            if ($vehicleReg !== null || $imei !== null) {
-                $clauses = [];
-                $params = [];
-                if ($vehicleReg !== null) {
-                    $clauses[] = 'vehicle_reg_no = ?';
-                    $params[] = $vehicleReg;
-                }
-                if ($imei !== null) {
-                    $clauses[] = 'imei = ?';
-                    $params[] = $imei;
-                }
-                $vehicle = Database::fetch('SELECT * FROM vehicles WHERE ' . implode(' OR ', $clauses) . ' LIMIT 1', $params);
-            }
+            $vehicle = $repository->vehicleByIdentity(
+                isset($payload['vehicle_reg_no']) ? (string) $payload['vehicle_reg_no'] : null,
+                isset($payload['imei']) ? (string) $payload['imei'] : null,
+            );
         }
         if (!$vehicle) {
             throw new \Latra\Domain\Exception\InvalidSubmission('Relay mode requires a known vehicle identity for queued payloads');

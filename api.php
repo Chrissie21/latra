@@ -1,7 +1,9 @@
 <?php
-require_once 'config.php'; require_once 'includes/Database.php'; require_once 'includes/WialonAPI.php';
-require_once 'includes/LatraMapper.php'; require_once 'includes/Auth.php'; require_once 'includes/Automation.php';
-require_once 'includes/GpsValidator.php'; require_once 'includes/EventDetector.php'; require_once 'includes/EmergencyHandler.php'; require_once 'includes/DeviceMonitor.php'; require_once 'includes/DataCleaner.php';
+/**
+ * HTTP entry point. Authentication, CSRF, JSON/SSE framing and audit stay here;
+ * every action delegates to an application use case or an infrastructure adapter.
+ */
+require_once 'config.php';
 
 header('Content-Type: application/json');
 
@@ -64,25 +66,63 @@ if (in_array($action, $writeActions, true)) {
     }
 }
 
+function operatorReadRepository(): \Latra\Application\Operations\OperatorReadRepository {
+    return new \Latra\Infrastructure\Persistence\DatabaseOperatorReadRepository();
+}
+
+function operatorActionRepository(): \Latra\Application\Operations\OperatorActionRepository {
+    return new \Latra\Infrastructure\Persistence\DatabaseOperatorActionRepository();
+}
+
+function operatorPayloadRepository(): \Latra\Application\Operations\OperatorPayloadRepository {
+    return new \Latra\Infrastructure\Persistence\DatabaseOperatorReadRepository();
+}
+
 function operatorFetch(): \Latra\Application\Operations\FetchOperatorMessages {
     return new \Latra\Application\Operations\FetchOperatorMessages(
-        new \Latra\Infrastructure\Persistence\DatabaseOperatorReadRepository(),RelayRuntime::enabled(),
+        operatorReadRepository(),
         static fn(array $vehicle,int $window,int $limit): array => RelayRuntime::poll($vehicle,$window,$limit),
-        static fn(array $vehicle,array $messages): array => IngestPipeline::importVehicle($vehicle,$messages),
-        static fn(): \Latra\Application\Operations\RetainedMessageSource => new \Latra\Infrastructure\Wialon\WialonRetainedMessageSource(new WialonAPI()),
-        static fn(): int => time(),
     );
 }
 
 function operatorEvidence(): \Latra\Application\Operations\ReadSubmissionEvidence {
     return new \Latra\Application\Operations\ReadSubmissionEvidence(
-        new \Latra\Infrastructure\Persistence\DatabaseOperatorReadRepository(),
+        operatorReadRepository(),
         static fn(array $vehicle,array $source,int $activity,array $addon,array $fuel): array => LatraMapper::buildPayload($vehicle,$source,$activity,$addon,$fuel),
     );
 }
 
-function extractWialonParams(array $message): array {
-    return \Latra\Domain\Collection\OperatorPayloadPolicy::parameters($message);
+function operatorSettings(): \Latra\Application\Operations\ManageOperatorSettings {
+    return new \Latra\Application\Operations\ManageOperatorSettings(operatorActionRepository());
+}
+
+function operatorSubmit(): \Latra\Application\Operations\SubmitOperatorPayload {
+    return new \Latra\Application\Operations\SubmitOperatorPayload(
+        operatorActionRepository(),
+        static fn(array $vehicle,array $source,int $activity,array $addon,array $fuel): array => LatraMapper::buildPayload($vehicle,$source,$activity,$addon,$fuel),
+        static fn(array $payload): array => LatraMapper::validatePayload($payload),
+        static fn(array $vehicle,array $payload): array => RelayRuntime::queueForVehicle($payload, (int) $vehicle['id']),
+    );
+}
+
+function operatorBulkPush(): \Latra\Application\Operations\PushActivityToVehicles {
+    return new \Latra\Application\Operations\PushActivityToVehicles(
+        operatorActionRepository(),
+        static fn(array $vehicle,array $source,int $activity,array $addon,array $fuel): array => LatraMapper::buildPayload($vehicle,$source,$activity,$addon,$fuel),
+        static fn(int $activity,array $params,array $custom): ?array => LatraMapper::buildAddonInfo($activity,$params,$custom),
+        static fn(array $params): array => LatraMapper::buildFuelInfo($params),
+        static fn(int $vehicle,int $at): array => LatraMapper::buildTripStats($vehicle,$at),
+        static fn(array $vehicle,array $payload): array => RelayRuntime::queueForVehicle($payload, (int) $vehicle['id']),
+        static fn(): int => time(),
+    );
+}
+
+function operatorHealth(): \Latra\Application\Operations\ReadSchedulerHealth {
+    return new \Latra\Application\Operations\ReadSchedulerHealth(
+        operatorActionRepository(),
+        static fn(): string|false => @file_get_contents(LOGS_DIR . '/last_tick.txt'),
+        APP_ENV, APP_VERSION,
+    );
 }
 
 function startSse(): void {
@@ -101,22 +141,6 @@ function sendSse(array $data): void {
     echo 'data: ' . json_encode($data) . "\n\n";
     if (ob_get_level() > 0) ob_flush();
     flush();
-}
-
-function queueRelayPayload(array $vehicle, array $payload): ?array {
-    if (!RelayRuntime::enabled()) {
-        return null;
-    }
-    try {
-        $result = RelayRuntime::queueForVehicle($payload, (int) $vehicle['id']);
-        return [
-            'success' => (bool) ($result['success'] ?? false),
-            'queued' => (int) ($result['queued'] ?? 0),
-            'message' => $result['message'] ?? 'Saved to the durable relay. Real LATRA delivery is blocked.',
-        ];
-    } catch (Throwable $e) {
-        return ['success' => false, 'message' => $e->getMessage()];
-    }
 }
 
 try {
@@ -140,47 +164,24 @@ try {
             break;
 
         case 'toggle_activity':
-            $vid = intval($_REQUEST['vehicle_id'] ?? 0);
-            $aid = intval($_REQUEST['activity_id'] ?? 0);
-            $enabled = intval($_REQUEST['enabled'] ?? 0);
-
-            $exists = Database::fetch("SELECT id FROM activity_mappings WHERE vehicle_id = ? AND activity_id = ?", [$vid, $aid]);
-            if ($exists) {
-                Database::update('activity_mappings', ['is_enabled' => $enabled], 'id = ?', [$exists['id']]);
-            } else {
-                Database::insert('activity_mappings', [
-                    'vehicle_id' => $vid,
-                    'activity_id' => $aid,
-                    'is_enabled' => $enabled
-                ]);
-            }
+            operatorSettings()->setActivity(
+                intval($_REQUEST['vehicle_id'] ?? 0),
+                intval($_REQUEST['activity_id'] ?? 0),
+                intval($_REQUEST['enabled'] ?? 0),
+            );
             echo json_encode(['success' => true]);
             break;
 
         case 'toggle_vehicle':
-            $id = intval($_REQUEST['id'] ?? 0);
-            $status = intval($_REQUEST['status'] ?? 0);
-            Database::update('vehicles', ['is_active' => $status], 'id = ?', [$id]);
+            operatorSettings()->setVehicleActive(
+                intval($_REQUEST['id'] ?? 0),
+                intval($_REQUEST['status'] ?? 0),
+            );
             echo json_encode(['success' => true]);
             break;
 
         case 'push_single':
-            $msgId = intval($_REQUEST['message_id'] ?? 0);
-            $msg = Database::fetch("SELECT ml.*, v.vehicle_reg_no, v.imei, v.name, ml.id as msg_id FROM message_log ml JOIN vehicles v ON ml.vehicle_id = v.id WHERE ml.id = ?", [$msgId]);
-            if (!$msg) throw new Exception('Message not found');
-            $payload = LatraMapper::buildPayload($msg, $msg, $msg['activity_id'], 
-                json_decode($msg['addon_info'] ?? '[]', true),
-                json_decode($msg['fuel_info'] ?? '[]', true)
-            );
-
-            if (RelayRuntime::enabled()) {
-                $vehicle = Database::fetch("SELECT * FROM vehicles WHERE id = ?", [(int) $msg['vehicle_id']]);
-                if (!$vehicle) throw new Exception('Vehicle not found');
-                $result = queueRelayPayload($vehicle, $payload);
-                echo json_encode($result ?: ['success' => true, 'message' => 'Saved to the durable relay. Real LATRA delivery is blocked.']);
-                break;
-            }
-
+            echo json_encode(operatorSubmit()->fromMessage(intval($_REQUEST['message_id'] ?? 0)));
             break;
 
         case 'get_response':
@@ -195,26 +196,10 @@ try {
             if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
                 throw new Exception('POST request required');
             }
-
-            $msgId = intval($_POST['message_id'] ?? 0);
-            $msg = Database::fetch("SELECT ml.*, v.vehicle_reg_no, v.imei, v.name FROM message_log ml JOIN vehicles v ON ml.vehicle_id = v.id WHERE ml.id = ?", [$msgId]);
-            if (!$msg) throw new Exception('Message not found');
-
-            $payload = json_decode($_POST['payload'] ?? '', true, 512, JSON_THROW_ON_ERROR);
-            if (!is_array($payload) || empty($payload['items']) || !is_array($payload['items'])) {
-                throw new Exception('Payload must contain an items array');
-            }
-            $validationErrors = LatraMapper::validatePayload($payload);
-            if ($validationErrors) {
-                throw new Exception('Invalid LATRA payload: ' . implode('; ', $validationErrors));
-            }
-            if (RelayRuntime::enabled()) {
-                $vehicle = Database::fetch("SELECT * FROM vehicles WHERE id = ?", [(int) $msg['vehicle_id']]);
-                if (!$vehicle) throw new Exception('Vehicle not found');
-                $result = queueRelayPayload($vehicle, $payload);
-                echo json_encode($result ?: ['success' => true, 'message' => 'Saved to the durable relay. Real LATRA delivery is blocked.']);
-                break;
-            }
+            echo json_encode(operatorSubmit()->fromMessagePayload(
+                intval($_POST['message_id'] ?? 0),
+                (string) ($_POST['payload'] ?? ''),
+            ));
             break;
 
         case 'activity_stats':
@@ -222,49 +207,21 @@ try {
             break;
 
         case 'test_wialon':
-            $wialon = new WialonAPI();
-            $ok = $wialon->login();
-            if ($ok) $wialon->logout();
+            $ok = (new \Latra\Infrastructure\Wialon\WialonConnectionProbe(
+                static fn(): WialonAPI => new WialonAPI(),
+            ))->check();
             echo json_encode(['success' => $ok, 'message' => $ok ? 'Wialon connection OK' : 'Wialon login failed']);
             break;
 
         case 'test_latra':
-            $url = Vault::latraUrl();
-            if ($url === '') {
-                echo json_encode(['success' => false, 'message' => 'LATRA_API_URL is not configured in .env']);
-                break;
-            }
-            $ch = curl_init($url);
-            curl_setopt_array($ch, [
-                CURLOPT_RETURNTRANSFER => true,
-                CURLOPT_HTTPHEADER => [
-                    'Authorization: Basic ' . base64_encode(Vault::latraUser() . ':' . Vault::latraPass()),
-                ],
-                CURLOPT_TIMEOUT => 8,
-                CURLOPT_CONNECTTIMEOUT => 6,
-                CURLOPT_SSL_VERIFYPEER => true,
-                CURLOPT_SSL_VERIFYHOST => 2,
-            ]);
-            $start = microtime(true);
-            $response = curl_exec($ch);
-            $curlError = curl_error($ch);
-            $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            $latency = (int) round((microtime(true) - $start) * 1000);
-            curl_close($ch);
-            if ($httpCode > 0) {
-                echo json_encode([
-                    'success' => true,
-                    'message' => 'Endpoint reachable (HTTP ' . $httpCode . ' in ' . $latency . ' ms). ' .
-                        (in_array($httpCode, [401, 403], true) ? 'Basic-auth check: credentials ' . ($httpCode === 401 ? 'rejected' : 'insufficient'). '.' : 'No auth challenge at this path.'),
-                ]);
-            } else {
-                echo json_encode(['success' => false, 'message' => 'Unreachable: ' . ($curlError ?: 'no response')]);
-            }
+            echo json_encode((new \Latra\Infrastructure\Latra\LatraEndpointProbe(
+                Vault::latraUrl(), Vault::latraUser(), Vault::latraPass(),
+            ))->probe());
             break;
 
         case 'generate_payload':
             echo json_encode((new \Latra\Application\Operations\BuildOperatorPayload(
-                new \Latra\Infrastructure\Persistence\DatabaseOperatorReadRepository(),
+                operatorPayloadRepository(),
                 new \Latra\Infrastructure\Wialon\WialonLatestVehicleSource(static fn(): WialonAPI => new WialonAPI()),
                 static fn(int $vehicle,int $at): array => LatraMapper::buildTripStats($vehicle,$at),static fn(): int => time(),
             ))->build((int)($_GET['vehicle_id'] ?? 0),(int)($_GET['activity_id'] ?? 0),(string)($_GET['mode'] ?? 'single')));
@@ -272,28 +229,14 @@ try {
 
         case 'push_custom_payload':
             if ($_SERVER['REQUEST_METHOD'] !== 'POST') throw new Exception('POST request required');
-            $vid = intval($_POST['vehicle_id'] ?? 0);
-            $aid = intval($_POST['activity_id'] ?? 0);
-            $vehicle = Database::fetch("SELECT * FROM vehicles WHERE id = ?", [$vid]);
-            if (!$vehicle) throw new Exception('Vehicle not found');
-
-            $payloadJson = $_POST['payload'] ?? '';
-            $payload = json_decode($payloadJson, true);
-            if (!$payload) throw new Exception('Invalid JSON payload');
-            $validationErrors = LatraMapper::validatePayload($payload);
-            if ($validationErrors) {
-                throw new Exception('Invalid LATRA payload: ' . implode('; ', $validationErrors));
-            }
-            if (RelayRuntime::enabled()) {
-                $result = queueRelayPayload($vehicle, $payload);
-                echo json_encode($result ?: ['success' => true, 'message' => 'Saved to the durable relay. Real LATRA delivery is blocked.']);
-                break;
-            }
+            echo json_encode(operatorSubmit()->fromCustomPayload(
+                intval($_POST['vehicle_id'] ?? 0),
+                (string) ($_POST['payload'] ?? ''),
+            ));
             break;
 
         case 'delete_push':
-            $id = intval($_REQUEST['id'] ?? 0);
-            Database::query("DELETE FROM push_log WHERE id = ?", [$id]);
+            operatorSettings()->deletePushLog(intval($_REQUEST['id'] ?? 0));
             echo json_encode(['success' => true, 'message' => 'Log entry deleted successfully']);
             break;
 
@@ -324,24 +267,7 @@ try {
 
         case 'retry_push':
             if ($_SERVER['REQUEST_METHOD'] !== 'POST') throw new Exception('POST request required');
-            $id = intval($_POST['id'] ?? 0);
-            $log = Database::fetch("SELECT * FROM push_log WHERE id = ?", [$id]);
-            if (!$log) throw new Exception('Log entry not found');
-            $vehicle = Database::fetch("SELECT * FROM vehicles WHERE id = ?", [(int) $log['vehicle_id']]);
-            if (!$vehicle) throw new Exception('Vehicle not found');
-
-            $payloadJson = $log['payload'];
-            $payload = json_decode($payloadJson ?? '', true);
-            if (!$payload) throw new Exception('Stored payload is invalid JSON. Use Edit to rebuild it.');
-            $validationErrors = LatraMapper::validatePayload($payload);
-            if ($validationErrors) {
-                throw new Exception('Invalid LATRA payload: ' . implode('; ', $validationErrors) . '. Use Edit and Update JSON before retrying.');
-            }
-            if (RelayRuntime::enabled()) {
-                $result = queueRelayPayload($vehicle, $payload);
-                echo json_encode($result ?: ['success' => true, 'message' => 'Saved to the durable relay. Real LATRA delivery is blocked.']);
-                break;
-            }
+            echo json_encode(operatorSubmit()->fromStoredPayload(intval($_POST['id'] ?? 0)));
             break;
 
         case 'bulk_fetch_messages':
@@ -352,63 +278,13 @@ try {
             break;
 
         case 'bulk_push_activity':
-            // SSE streaming: pushes a single activity to LATRA for multiple vehicles
             $rawIds = $_GET['vehicle_ids'] ?? '';
             $vehicleIds = array_filter(array_map('intval', explode(',', $rawIds)));
             $aid = intval($_GET['activity_id'] ?? 0);
             if (empty($vehicleIds)) throw new Exception('No vehicle IDs provided');
             if (!$aid) throw new Exception('Activity ID required');
             startSse();
-
-            $total = count($vehicleIds);
-            $successCount = 0;
-            $failCount = 0;
-            sendSse(['type' => 'init', 'total' => $total, 'message' => 'Connected. Starting LATRA push...']);
-
-            foreach ($vehicleIds as $i => $vid) {
-                $vehicle = Database::fetch("SELECT * FROM vehicles WHERE id = ?", [$vid]);
-                if (!$vehicle) {
-                    sendSse([
-                        'type' => 'progress', 'current' => $i + 1, 'total' => $total,
-                        'vehicle' => 'Vehicle #' . $vid, 'latra_status' => 'fail'
-                    ]);
-                    $failCount++;
-                    continue;
-                }
-
-                try {
-                    // Use latest message or fall back to vehicle data
-                    $latest = Database::fetch("SELECT * FROM message_log WHERE vehicle_id = ? ORDER BY wialon_msg_time DESC LIMIT 1", [$vid]);
-                    $source = $latest ?: $vehicle;
-                    $params = $latest ? extractWialonParams($latest) : [];
-                    $addonCustom = [];
-                    if ($aid === EventDetector::ENGINE_OFF) {
-                        $addonCustom = LatraMapper::buildTripStats($vid, (int) ($source['wialon_msg_time'] ?? $latest['wialon_msg_time'] ?? time()));
-                    }
-                    $addonInfo = LatraMapper::buildAddonInfo($aid, $params, $addonCustom) ?? [];
-                    $fuelInfo = $aid === 16 ? LatraMapper::buildFuelInfo($params) : [];
-                    $payload = LatraMapper::buildPayload($vehicle, $source, $aid, $addonInfo, $fuelInfo);
-                    if (RelayRuntime::enabled()) {
-                        $result = queueRelayPayload($vehicle, $payload);
-                        $latraStatus = ($result['success'] ?? false) ? 'queued' : 'fail';
-                        sendSse([
-                            'type' => 'progress', 'current' => $i + 1, 'total' => $total,
-                            'vehicle' => $vehicle['vehicle_reg_no'], 'latra_status' => $latraStatus,
-                            'message' => $result['message'] ?? 'Saved to the durable relay. Real LATRA delivery is blocked.'
-                        ]);
-                        if ($latraStatus === 'queued') $successCount++; else $failCount++;
-                        continue;
-                    }
-                } catch (Exception $ex) {
-                    sendSse([
-                        'type' => 'progress', 'current' => $i + 1, 'total' => $total,
-                        'vehicle' => $vehicle['vehicle_reg_no'], 'latra_status' => 'fail'
-                    ]);
-                    $failCount++;
-                }
-            }
-
-            sendSse(['type' => 'done', 'success' => $successCount, 'failed' => $failCount]);
+            operatorBulkPush()->run($vehicleIds, $aid, static fn(array $event) => sendSse($event));
             break;
 
         case 'latra_interrogate':
@@ -418,7 +294,7 @@ try {
                 throw new Exception('vehicle_id is required');
             }
             $snapshot=(new \Latra\Application\Operations\ReadDeviceSnapshot(
-                new \Latra\Infrastructure\Persistence\DatabaseOperatorReadRepository(),static fn(): int => time(),
+                operatorReadRepository(),static fn(): int => time(),
             ))->read($vehicleId);
             $vehicle=$snapshot['vehicle'];
             Auth::audit(
@@ -435,21 +311,7 @@ try {
             break;
 
         case 'scheduler_health':
-            $lastRun = Database::fetch("SELECT MAX(started_at) AS s FROM automation_runs")['s'] ?? null;
-            $enabledBuckets = (int) (Database::fetch("SELECT COUNT(*) AS c FROM automation_buckets WHERE is_enabled = 1")['c'] ?? 0);
-            $backlog = (int) (Database::fetch("SELECT COUNT(*) AS c FROM message_log WHERE latra_status = 'pending'")['c'] ?? 0);
-            $deadLetter = (int) (Database::fetch("SELECT COUNT(*) AS c FROM message_log WHERE latra_status IN ('manual','dead')")['c'] ?? 0);
-            $lastTick = @file_get_contents(LOGS_DIR . '/last_tick.txt');
-            echo json_encode([
-                'ok' => true,
-                'last_tick_at' => $lastTick,
-                'last_run_at' => $lastRun,
-                'enabled_buckets' => $enabledBuckets,
-                'backlog' => $backlog,
-                'dead_letter' => $deadLetter,
-                'app_env' => APP_ENV,
-                'app_version' => APP_VERSION,
-            ]);
+            echo json_encode(operatorHealth()->read());
             break;
 
         default:

@@ -52,17 +52,9 @@ class LatraMapper
 
     public static function buildAddonInfo(int $activityId, array $wialonParams = [], array $customData = []): ?array
     {
-        if (in_array($activityId, [9, 10], true)) {
-            $external = $customData['extVolt'] ?? $wialonParams['pwr_ext'] ?? $wialonParams['ext_power'] ?? $wialonParams['io_66'] ?? null;
-            $internal = $customData['intVolt'] ?? $wialonParams['pwr_int'] ?? $wialonParams['int_battery'] ?? $wialonParams['io_67'] ?? null;
-            if ($external === null || $external === '') {
-                Logger::info('voltage.skip', ['field' => 'ext_power_voltage', 'reason' => 'no_live_value']);
-            }
-            if ($internal === null || $internal === '') {
-                Logger::info('voltage.skip', ['field' => 'int_battery_voltage', 'reason' => 'no_live_value']);
-            }
-        }
-        return LatraPayloadPolicy::buildAddonInfo($activityId, $wialonParams, $customData);
+        return (new \Latra\Application\Ingestion\BuildActivityAddon(
+            static fn(string $event, array $context) => Logger::info($event, $context),
+        ))->build($activityId, $wialonParams, $customData);
     }
 
     public static function buildFuelInfo(array $wialonParams = [], array $customData = []): array

@@ -25,7 +25,7 @@ try {
     if (isset($options['from']) !== isset($options['to'])) throw new InvalidArgumentException('Provide both --from and --to');
     require_once __DIR__ . '/../config.php';
     if (!RelayRuntime::enabled()) throw new RuntimeException('Relay architecture is not active');
-    $vehicle = Database::fetch('SELECT * FROM vehicles WHERE id=?', [$vehicleId]);
+    $vehicle = (new \Latra\Infrastructure\Persistence\PdoRelayRuntimeRepository(Database::getInstance()))->vehicle($vehicleId);
     if (!$vehicle || empty($vehicle['is_active']) || empty($vehicle['wialon_unit_id'])) throw new RuntimeException('Active Wialon vehicle required');
     $actions = (int) isset($options['enroll']) + (int) isset($options['status']) + (int) isset($options['recover-review']);
     if ($actions > 1 || ($actions > 0 && (isset($options['from']) || isset($options['to'])))) {
@@ -46,8 +46,7 @@ try {
         $from = isset($options['from']) ? relayArgument($options, 'from', 0) : null;
         $to = isset($options['to']) ? relayArgument($options, 'to', 0) : null;
         $settings = RelayRuntime::settings($vehicleId);
-        $allowed = array_map('intval', array_column(Database::fetchAll('SELECT DISTINCT b.activity_id FROM automation_buckets b
-            JOIN bucket_vehicles bv ON bv.bucket_id=b.id WHERE b.is_enabled=1 AND bv.vehicle_id=?', [$vehicleId]), 'activity_id'));
+        $allowed = RelayRuntime::allowedActivities($vehicleId);
         $result = RelayRuntime::collect($vehicle, Schema::configInt('poll_interval_seconds', 180), (int) $settings['max_records'],
             ':poll', $allowed, null, $from, $to);
         echo json_encode($result + RelayRuntime::status($vehicle), JSON_THROW_ON_ERROR) . "\n";

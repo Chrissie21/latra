@@ -2,6 +2,10 @@
 require_once __DIR__ . '/autoload.php';
 /**
  * Authentication, session guarding, CSRF protection, rate limiting and audit.
+ *
+ * API-only surface: the web UI (and its page guards, HTML token field and role
+ * labels) was removed by owner decision, so this adapter exposes only the
+ * session/credential/CSRF/audit contract the entry points use.
  */
 class Auth {
     private static function repository(): \Latra\Infrastructure\Persistence\PdoAuthRepository {
@@ -29,16 +33,6 @@ class Auth {
 
     public static function check(): bool { return self::session()->check(); }
 
-    public static function requireLogin(): void {
-        if (!self::check()) {
-            header('Location: login.php');
-            exit;
-        }
-        if (class_exists('Schema')) {
-            try { Schema::ensure(); } catch (Throwable $e) { error_log('schema ensure: ' . $e->getMessage()); }
-        }
-    }
-
     public static function logout(): void { (new \Latra\Infrastructure\Security\NativeAuthSession())->clear(); }
 
     public static function user(): array {
@@ -49,34 +43,7 @@ class Auth {
         return self::user()['role'] ?? '';
     }
 
-    public static function isAdmin(): bool {
-        return self::role() === 'admin';
-    }
-
     public static function canWrite(): bool { return \Latra\Domain\Security\AccessPolicy::canWrite(self::role()); }
-
-    /** View (read-only) access: any authenticated internal or LATRA role. */
-    public static function canView(): bool {
-        return self::role() !== '';
-    }
-
-    public static function requireRole(array $roles): void {
-        self::requireLogin();
-        if (!in_array(self::role(), $roles, true)) {
-            http_response_code(403);
-            echo 'Forbidden';
-            exit;
-        }
-    }
-
-    /** Require login + the given permission; used for page access. */
-    public static function requireView(string $perm): void {
-        self::requireLogin();
-        if (!self::hasPermission($perm)) {
-            http_response_code(403);
-            exit('Forbidden');
-        }
-    }
 
     public static function requireWrite(): void {
         if (!self::canWrite()) {
@@ -87,23 +54,15 @@ class Auth {
         }
     }
 
-    /**
-     * LATRA-facing restricted roles. Internal roles (admin/operator) hold every permission.
-     * Permission is enforced server-side — the UI only hides what it offers.
-     */
-    public static function roleLabels(): array { return \Latra\Domain\Security\AccessPolicy::roleLabels(); }
-
-    /** Read-only permission set shared by the internal viewer role and LATRA viewers. */
-    public static function viewerPermissions(): array { return \Latra\Domain\Security\AccessPolicy::viewerPermissions(); }
-
-    public static function latraPermissions(): array { return \Latra\Domain\Security\AccessPolicy::latraPermissions(); }
-
-    public static function isLatraRole(?string $role = null): bool { return \Latra\Domain\Security\AccessPolicy::isLatraRole($role ?? self::role()); }
-
     public static function hasPermission(string $perm): bool { return \Latra\Domain\Security\AccessPolicy::hasPermission(self::role(), $perm); }
 
     public static function requirePermission(string $perm): void {
-        self::requireLogin();
+        if (!self::check()) {
+            http_response_code(401);
+            header('Content-Type: application/json');
+            echo json_encode(['success' => false, 'error' => 'Unauthorized']);
+            exit;
+        }
         if (!self::hasPermission($perm)) {
             http_response_code(403);
             header('Content-Type: application/json');
@@ -113,10 +72,6 @@ class Auth {
     }
 
     public static function csrfToken(): string { return self::session()->csrfToken(); }
-
-    public static function csrfField(): string {
-        return '<input type="hidden" name="_csrf" value="' . self::csrfToken() . '">';
-    }
 
     /** Validate a CSRF token from POST body, header or query string. */
     public static function verifyCsrf(?string $token): bool { return self::session()->verifyCsrf($token); }

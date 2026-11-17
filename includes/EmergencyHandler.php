@@ -33,7 +33,9 @@ class EmergencyHandler {
     public static function closeEndedEvent(int $vehicleId, array $messages): void {
         (new CloseEndedEmergencyEvent(
             self::events(),
-            new \Latra\Infrastructure\Ingestion\TelemetryEmergencyActivityDetector(),
+            new \Latra\Infrastructure\Ingestion\TelemetryEmergencyActivityDetector(
+                new \Latra\Infrastructure\Persistence\PdoIngestionSettingsRepository(Database::getInstance()),
+            ),
             self::endUseCase(),
         ))->close($vehicleId, $messages);
     }
@@ -71,11 +73,8 @@ class EmergencyHandler {
      * Used when the triggering condition (e.g. speed) no longer applies.
      */
     public static function endActiveByVehicle(int $vehicleId, string $eventType): void {
-        $rows = Database::fetchAll(
-            "SELECT id FROM emergency_events WHERE vehicle_id = ? AND event_type = ? AND status = 'active'",
-            [$vehicleId, $eventType]
-        );
-        foreach ($rows as $r) self::endEvent((int)$r['id']);
+        (new \Latra\Application\Emergency\EndActiveEmergencyEvents(self::events(), self::endUseCase()))
+            ->end($vehicleId, $eventType);
     }
 
     /**
@@ -89,17 +88,12 @@ class EmergencyHandler {
      * Count of currently active emergency events (fleet-wide).
      */
     public static function activeCount(): int {
-        $row = Database::fetch("SELECT COUNT(*) AS c FROM emergency_events WHERE status = 'active'");
-        return (int)($row['c'] ?? 0);
+        return (new \Latra\Application\Emergency\ReadEmergencyEvents(self::events()))->activeCount();
     }
 
     /** List all emergency events, newest first (for audit UI). */
     public static function listEvents(int $limit = 50): array {
-        return Database::fetchAll(
-            "SELECT e.*, v.vehicle_reg_no FROM emergency_events e
-             JOIN vehicles v ON v.id = e.vehicle_id
-             ORDER BY e.started_at DESC LIMIT $limit"
-        );
+        return (new \Latra\Application\Emergency\ReadEmergencyEvents(self::events()))->recent($limit);
     }
 
     /**

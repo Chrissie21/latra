@@ -1,8 +1,10 @@
 <?php
 /** Source and mapping contracts. Synthetic data only; no runtime credentials or HTTP. */
 require_once __DIR__ . '/bootstrap.php';
-foreach (['ParamResolver', 'Normaliser', 'LatraMapper', 'EventDetector', 'GpsValidator', 'RelayMapper',
-    'WialonAPI', 'RelayMockTransport'] as $class) require_once __DIR__ . '/../includes/' . $class . '.php';
+require_once __DIR__ . '/../includes/autoload.php';
+use Latra\Application\Collection\RelayPayloadMapper as RelayMapper;
+foreach (['ParamResolver', 'LatraMapper', 'GpsValidator',
+    'WialonAPI'] as $class) require_once __DIR__ . '/../includes/' . $class . '.php';
 $db = testDatabase(); fixture($db);
 function verify(bool $ok, string $why): void { if (!$ok) throw new RuntimeException($why); }
 function rejects(callable $action): void {
@@ -102,5 +104,5 @@ foreach ([new WindowSource(['count' => 3, 'messages' => [source(), source([], 1)
 $empty = new WindowSource(['count' => 0, 'messages' => []]);
 verify($empty->getCompleteWindow(123, $now, $now + 3, 2, 10, 16384) === [], 'Empty complete window rejected');
 foreach (['https://example.com/', 'http://localhost:8000/', 'http://127.0.0.1:8000/redirect',
-    'http://127.0.0.1:8000@evil.example/', 'http://127.0.0.1:99999/'] as $url) rejects(static fn() => new RelayMockTransport($url));
+    'http://127.0.0.1:8000@evil.example/', 'http://127.0.0.1:99999/'] as $url) rejects(static fn() => new \Latra\Infrastructure\Delivery\LoopbackRelayTransport($url));
 echo "PASS loaded-session pagination, incomplete/over-bound windows, cleanup and real-destination blocking\n";
