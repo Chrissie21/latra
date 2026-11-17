@@ -49,12 +49,12 @@ jobs:
           php tests/relay-runtime-usecases.php
           php tests/emergency-relay-status.php
           php tests/relay-recovery.php
+          php tests/relay-review-mapping.php
           php tests/relay-config.php
           php tests/relay-manual-submission.php
           php tests/workflow-errors.php
           php tests/relay-cutover.php
           php tests/relay-api.php
-          php tests/api-legacy-state.php
       # durable-relay.php starts tests/relay-mock.php on an ephemeral loopback port.
       - name: Verify native queue, process death and application integration
         env:

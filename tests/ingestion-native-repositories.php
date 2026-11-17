@@ -29,24 +29,17 @@ $db->exec($sql);
 (new ReflectionProperty(Database::class,'sensitiveConfigScrubbed'))->setValue(null,true);
 Schema::ensure();
 $db->exec("INSERT INTO vehicles (id,wialon_unit_id,vehicle_reg_no,imei) VALUES (7,123,'SYNTHETIC-NATIVE','123456789012345')");
-$state=new Latra\Infrastructure\Persistence\PdoVehicleStateRepository($db);
 $evidence=new Latra\Infrastructure\Persistence\PdoValidationEvidenceRepository($db);
 $db->beginTransaction();
-$state->save(7,['engine_status'=>'on','last_speed_kmh'=>45.5]);
-$state->save(7,['engine_status'=>'off']);
-nativeRepositoryExpect($state->find(7)['engine_status']==='off' && (float)$state->find(7)['last_speed_kmh']===45.5,
-    'Native partial state update failed');
 $count=$evidence->recordErrors(['vehicle_id'=>7,'vehicle_reg_no'=>'SYNTHETIC-NATIVE','activity_id'=>1,'wialon_msg_time'=>100],
     [['field'=>'lat','value'=>['bad'=>true],'reason'=>'synthetic','code'=>'bad_lat']]);
 $row=$db->query('SELECT * FROM validation_errors')->fetch();
 nativeRepositoryExpect($count===1 && $row['message_log_id']===null && $row['invalid_value']==='{"bad":true}'
     && (int)$row['gps_timestamp']===100,'Native evidence shape failed');
 $db->rollBack();
-nativeRepositoryExpect($state->find(7)===[] && (int)$db->query('SELECT COUNT(*) FROM validation_errors')->fetchColumn()===0,
-    'Native state/evidence escaped rollback');
-$state->save(7,['engine_status'=>'on']);
-nativeRepositoryExpect($state->find(7)['engine_status']==='on','Native standalone state save failed');
-echo "PASS native validation evidence, vehicle state, partial writes and transaction rollback\n";
+nativeRepositoryExpect((int)$db->query('SELECT COUNT(*) FROM validation_errors')->fetchColumn()===0,
+    'Native evidence escaped rollback');
+echo "PASS native validation evidence and transaction rollback\n";
 $scheduled=new Latra\Infrastructure\Persistence\PdoScheduledVehicleRepository($db);
 nativeRepositoryExpect(array_column($scheduled->ordinaryVehicles(),'id')===[7] && $scheduled->emergencyVehicles()===[],
     'Native scheduled vehicle selection failed');

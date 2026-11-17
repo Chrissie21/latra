@@ -1,5 +1,5 @@
 <?php
-/** Run deterministic retention, cleanup and export regressions without external services. */
+/** Run deterministic retention and cleanup regressions without external services. */
 require __DIR__ . '/bootstrap.php';
 $pdo = testDatabase();
 fixture($pdo);
@@ -44,17 +44,6 @@ $failed = false;
 try { Retention::maintain(); } catch (PDOException $e) { $failed = true; }
 expect($failed && !$pdo->inTransaction(), 'maintenance failure was hidden or transaction leaked');
 echo "PASS maintenance failure visibility\n";
-
-// Keyset pages preserve tied timestamps and filtering without buffering the whole history.
-fixture($pdo);
-$stmt = $pdo->prepare('INSERT INTO push_log (id,vehicle_id,activity_id,response_status,created_at,response_body) VALUES (?,1,2,?,?,?)');
-for ($i = 1; $i <= 1250; $i++) $stmt->execute([$i, $i % 2 ? '1' : '0', '2020-01-01 00:00:00', str_repeat('x', 800)]);
-for ($i = 1251; $i <= 1850; $i++) $stmt->execute([$i, '1', null, 'synthetic NULL timestamp']);
-$ids = [];
-foreach (Export::pushLogRows('sent') as $row) $ids[] = (int) $row[0];
-expect(count($ids) === 1225 && count(array_unique($ids)) === 1225, 'paged CSV lost or repeated tied rows');
-expect($ids[0] === 1249 && $ids[624] === 1 && end($ids) === 1251, 'CSV cursor order changed across pages');
-echo "PASS paged export across timestamp ties\n";
 
 // Hour-based purging must keep its own configured window instead of using retention_days.
 fixture($pdo);

@@ -96,54 +96,12 @@ define('APP_KEY', envValue('APP_KEY', ''));
 define('TIMEZONE', 'Africa/Dar_es_Salaam');
 define('DATE_FORMAT', 'Y-m-d H:i:s');
 
-// Pagination
-define('ITEMS_PER_PAGE', 15);
-
 // Session
 define('SESSION_TIMEOUT', 3600);
-
-// Colors Theme
-define('COLOR_BG', '#F8FAFC');
-define('COLOR_CARD', '#FFFFFF');
-define('COLOR_TEXT', '#64748B');
-define('COLOR_PRIMARY', '#3B82F6');
-define('COLOR_SUCCESS', '#10B981');
-define('COLOR_WARNING', '#F59E0B');
-define('COLOR_DANGER', '#EF4444');
-
-// Paths
-define('BASE_URL', rtrim(dirname($_SERVER['SCRIPT_NAME']), '/'));
-define('ASSETS_URL', BASE_URL . '/assets');
 
 date_default_timezone_set('UTC');
 if (!defined('DISPLAY_TZ')) {
     define('DISPLAY_TZ', TIMEZONE);
-}
-
-/** Convert a UTC datetime string to the display timezone. */
-function toDisplay(string $utcDatetime): string {
-    if ($utcDatetime === '' || $utcDatetime === '0000-00-00 00:00:00') {
-        return $utcDatetime;
-    }
-    static $tz = null;
-    if ($tz === null) {
-        $tz = new DateTimeZone(DISPLAY_TZ);
-    }
-    try {
-        $dt = new DateTime($utcDatetime, new DateTimeZone('UTC'));
-        $dt->setTimezone($tz);
-        return $dt->format(DATE_FORMAT);
-    } catch (Throwable $e) {
-        return $utcDatetime;
-    }
-}
-
-/** HTML-escape helper for output. Never double-wrap values already escaped. */
-function e($value): string {
-    if ($value === null || $value === false) {
-        return '';
-    }
-    return htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
 
 if (PHP_SAPI !== 'cli' && !headers_sent()) {

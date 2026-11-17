@@ -87,12 +87,7 @@ jobs:
           coverage: none
       - name: Verify isolated ingestion application orchestration
         run: |
-          php tests/ingestion-usecase.php
-          php tests/ingestion-connection.php
-          php tests/ingestion-message-repository.php
           php tests/ingestion-validation-evidence.php
-          php tests/ingestion-vehicle-state.php
-          php tests/ingestion-newest-message.php
           php tests/ingestion-trip-stats.php
           php tests/ingestion-device-status.php
           php tests/emergency-events.php
@@ -105,24 +100,23 @@ jobs:
           php tests/scheduling-repository.php
           php tests/retention-usecase.php
           php tests/database-boundary.php
+          php tests/entrypoint-audit.php
+          php tests/retired-paths.php
+          php tests/scheduler-lock.php
+          php tests/worker-cadence.php
           php tests/maintenance-jobs.php
           php tests/data-cleanup.php
           php tests/operator-evidence.php
+          php tests/operator-actions.php
+          php tests/operator-provisioning.php
+          php tests/runtime-adapters.php
+          php tests/activity-addon.php
           php tests/operator-fetch.php
           php tests/operator-payload.php
           php tests/monitoring-usecases.php
           php tests/webhook-usecase.php
-          php tests/export-usecase.php
           php tests/vault-usecase.php
           php tests/auth-usecases.php
           php tests/auth-native-session.php
           php tests/security-persistence.php
           php tests/fuel-report-policy.php
-      # Separate from the delivery fixture: this suite imports the real schema and kills its own workers.
-      - name: Verify atomic ingestion, crash restart and unchanged eligibility
-        env:
-          LATRA_TEST_DSN: mysql:host=127.0.0.1;port=3306;dbname=latra_test_ingestion;charset=utf8mb4
-          LATRA_TEST_USER: root
-          LATRA_TEST_PASSWORD: synthetic-test-password
-          LATRA_TEST_ALLOW_RESET: '1'
-        run: php tests/ingestion-recovery.php

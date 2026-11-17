@@ -15,19 +15,22 @@ foreach ($files as $file) {
     }
     $forbidden = str_contains($code, 'Latra\\Infrastructure\\')
         || ($layer[1]==='Domain' && str_contains($code,'Latra\\Application\\'))
-        || preg_match('/\b(?:Database|PDO|WialonAPI|LatraAdapter)::/', $code);
+        || preg_match('/\b(?:Database|PDO|WialonAPI|LatraAdapter)::/', $code)
+        || preg_match('/\bnew\s+(?:PDO|WialonAPI|Database)\b/', str_replace(chr(92), '', $code))
+        || preg_match('/\b(?:file_get_contents|file_put_contents|fopen|curl_[a-z_]+|shell_exec|exec|passthru|system|getenv|putenv)\s*\(/', $code)
+        || preg_match('/\$_(?:SESSION|GET|POST|REQUEST|SERVER|ENV)\b/', $code);
     foreach (token_get_all($code) as $token) {
         if (is_array($token) && in_array($token[0],[T_REQUIRE,T_REQUIRE_ONCE,T_INCLUDE,T_INCLUDE_ONCE],true)) $forbidden=true;
     }
     preg_match_all('/\buse\s+([^;]+);/', $code, $imports);
     foreach ($imports[1] as $import) {
-        if (in_array(ltrim(trim($import), chr(92)), ['Database','PDO','WialonAPI','LatraAdapter','Auth','Automation','AITools'],true)) $forbidden=true;
+        if (in_array(ltrim(trim($import), chr(92)), ['Database','PDO','WialonAPI','LatraAdapter','Auth'],true)) $forbidden=true;
     }
     if ($forbidden) throw new RuntimeException('Forbidden runtime dependency in '.$relative);
     $checked++;
 }
 if (!$checked) throw new RuntimeException('No application/domain files checked');
 require __DIR__.'/../includes/autoload.php';
-if (!class_exists(Latra\Domain\Ingestion\NewestSourceMessagePolicy::class)
+if (!class_exists(Latra\Domain\Ingestion\GpsValidationPolicy::class)
     || !class_exists(Database::class)) throw new RuntimeException('Namespaced or legacy autoload failed');
 echo "PASS $checked domain/application files preserve dependency direction and runtime autoload\n";

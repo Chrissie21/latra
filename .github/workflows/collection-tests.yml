@@ -21,7 +21,7 @@ jobs:
           coverage: none
       - name: Parse collection sources
         run: |
-          php -l includes/CollectionStore.php
+          php -l src/Infrastructure/Collection/CollectionStore.php
           php -l bin/collection.php
           php -l tests/collection.php
       # No credentials, live SQL dump, application bootstrap or network clients.
