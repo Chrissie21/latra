@@ -51,7 +51,7 @@ jobs:
         run: |
           php scripts/migrate-delivery.php
           php scripts/migrate-delivery.php
-      - name: Verify security and assistant persistence on disposable fixtures
+      - name: Verify security persistence on disposable fixtures
         env:
           LATRA_TEST_DSN: mysql:host=127.0.0.1;port=3306;dbname=latra_test_delivery;charset=utf8mb4
           LATRA_TEST_USER: root
@@ -59,7 +59,6 @@ jobs:
           LATRA_TEST_ALLOW_RESET: '1'
         run: |
           php tests/security-persistence.php
-          php tests/assistant-persistence.php
   ingestion:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -113,10 +112,6 @@ jobs:
           php tests/operator-payload.php
           php tests/monitoring-usecases.php
           php tests/webhook-usecase.php
-          php tests/assistant-usecase.php
-          php tests/assistant-tools.php
-          php tests/assistant-provider.php
-          php tests/assistant-persistence.php
           php tests/export-usecase.php
           php tests/vault-usecase.php
           php tests/auth-usecases.php

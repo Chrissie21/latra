@@ -16,7 +16,7 @@ class Retention {
     public static function maintain(): int {
         $days = [];
         foreach (['stream'=>['MAINTAIN_STREAM_DAYS',14], 'runs'=>['MAINTAIN_RUN_DAYS',60],
-            'audit'=>['MAINTAIN_AUDIT_DAYS',365], 'ai'=>['MAINTAIN_AI_DAYS',180]] as $key => [$variable,$default]) {
+            'audit'=>['MAINTAIN_AUDIT_DAYS',365]] as $key => [$variable,$default]) {
             $days[$key] = (int) (function_exists('envValue') ? envValue($variable, (string)$default)
                 : (getenv($variable) === false ? $default : getenv($variable)));
         }

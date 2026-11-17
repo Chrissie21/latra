@@ -69,10 +69,7 @@ function testDatabase(): PDO {
 }
 
 require_once __DIR__ . '/../includes/Database.php';
-require_once __DIR__ . '/../includes/Outbox.php';
 require_once __DIR__ . '/../includes/Retention.php';
-require_once __DIR__ . '/../includes/Automation.php';
-require_once __DIR__ . '/../includes/Export.php';
 
 /** Keep configuration reads real, but avoid unrelated runtime schema initialization. */
 class Schema {
@@ -108,8 +105,6 @@ function fixture(PDO $pdo): void {
             FOREIGN KEY (run_id) REFERENCES automation_runs(id) ON DELETE CASCADE,
             FOREIGN KEY (message_log_id) REFERENCES message_log(id) ON DELETE SET NULL',
         'audit_log' => 'id INTEGER PRIMARY KEY, created_at DATETIME',
-        'ai_chat_log' => 'id INTEGER PRIMARY KEY, conversation_id VARCHAR(64), created_at DATETIME',
-        'ai_conversations' => 'id INTEGER PRIMARY KEY, conversation_id VARCHAR(64), updated_at DATETIME',
         'jobs' => 'job_key VARCHAR(60) PRIMARY KEY, interval_seconds INTEGER, next_run_at DATETIME',
         'job_runs' => 'id INTEGER PRIMARY KEY, status VARCHAR(20), started_at DATETIME, finished_at DATETIME',
         'vehicles' => 'id INTEGER PRIMARY KEY, vehicle_reg_no VARCHAR(40)',
@@ -136,6 +131,8 @@ function queueMessage(int $id): array {
     Database::query("INSERT INTO message_log (id,latra_status,created_at) VALUES (?,'pending',?)", [$id, gmdate(DATE_FORMAT)]);
     $message = ['id' => $id, 'vehicle_id' => 1, 'activity_id' => 2, 'idempotency_key' => 'test-' . $id];
     $body = ['items' => [['activity_id' => 2, 'synthetic_id' => $id]]];
-    $queueId = Outbox::enqueue($message, $body);
-    return [$message, $body, $queueId];
+    // Historical outbox rows are fixture data, never produced by the relay runtime.
+    Database::query("INSERT INTO outbox (message_id,vehicle_id,activity_id,idempotency_key,payload,status,next_attempt_at)
+        VALUES (?,1,2,?,?,'pending',?)", [$id, 'test-' . $id, json_encode($body), gmdate(DATE_FORMAT)]);
+    return [$message, $body, (int) Database::getInstance()->lastInsertId()];
 }

@@ -29,8 +29,6 @@ final class PdoRetentionRepository implements RetentionRepository
             'automation_runs' => ['automation_runs', "started_at < ? AND NOT EXISTS (SELECT 1 FROM automation_run_items r WHERE r.run_id = automation_runs.id)"],
             'job_runs' => ['job_runs', 'started_at < ?'],
             'audit_log' => ['audit_log', 'created_at < ?'],
-            'ai_chat_log' => ['ai_chat_log', 'created_at < ?'],
-            'ai_conversations' => ['ai_conversations', "updated_at < ? AND NOT EXISTS (SELECT 1 FROM ai_chat_log c WHERE c.conversation_id = ai_conversations.conversation_id)"],
             default => throw new \InvalidArgumentException('Unknown retention category'),
         };
         return $this->deletePages($table, $condition, [$cutoff], $maxBatches, $category === 'archive_sources');
