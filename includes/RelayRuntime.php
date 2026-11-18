@@ -6,6 +6,8 @@ use Latra\Application\Collection\CollectRelayBucket;
 use Latra\Application\Collection\CollectRelayEventCycle;
 use Latra\Domain\Collection\RelayDeliveryGatePolicy;
 use Latra\Domain\Collection\RelayIdentityPolicy;
+use Latra\Domain\Collection\RelayRuntimePolicy;
+use Latra\Domain\Ingestion\DeviceStatusPolicy;
 use Latra\Infrastructure\Persistence\PdoIngestionSettingsRepository;
 use Latra\Infrastructure\Persistence\PdoRelayEnrollmentRepository;
 use Latra\Infrastructure\Persistence\PdoRelayRuntimeRepository;
@@ -40,7 +42,7 @@ final class RelayRuntime {
 
     private static function queue(array $settings): DurableRelay {
         return new DurableRelay(Database::getInstance(), Schema::configInt('outbox_max_tries', 8),
-            static fn(int $attempt): int => min(900, \Latra\Domain\Scheduling\RetryBackoffPolicy::next($attempt)),
+            static fn(int $attempt): int => RelayRuntimePolicy::backoff($attempt),
             (int) $settings['max_pending_records'], (int) $settings['max_pending_bytes']);
     }
 
@@ -86,9 +88,9 @@ final class RelayRuntime {
         return new RelayPayloadMapper($vehicle, $ingestion->enabledActivities((int) $vehicle['id']), $allowed,
             !empty($vehicle['speed_limit_kmh']) ? (float) $vehicle['speed_limit_kmh']
                 : $ingestion->speedLimit((int) $vehicle['id']),
-            Schema::configInt('overspeed_consecutive', 2),
-            Schema::configInt('battery_low_mv', 3200), $settings['profile'],
-            $events ? max(0, Schema::configInt('event_engine_cooldown_seconds', 300)) : 0,
+            Schema::configInt('overspeed_consecutive', RelayRuntimePolicy::OVERSPEED_CONSECUTIVE),
+            Schema::configInt('battery_low_mv', DeviceStatusPolicy::BATTERY_LOW_MV), $settings['profile'],
+            $events ? max(0, Schema::configInt('event_engine_cooldown_seconds', RelayRuntimePolicy::EVENT_COOLDOWN_SECONDS)) : 0,
             ParamResolver::enabledAliases());
     }
 
@@ -164,7 +166,7 @@ final class RelayRuntime {
             return $activeVehicle;
         };
         $flush = new \Latra\Application\Delivery\FlushPendingRelayReports(
-            static fn(int $now): array => self::repository()->pendingUnits($now, 200),
+            static fn(int $now): array => self::repository()->pendingUnits($now, RelayRuntimePolicy::PENDING_UNITS_PER_CYCLE),
             static function (string $unit, int $now, callable $send, callable $canSend) use (
                 $findVehicle,
                 &$activeUnit,
@@ -197,7 +199,7 @@ final class RelayRuntime {
                 $activityIds = RelayDeliveryGatePolicy::activityIds($pending['payload']);
                 return RelayDeliveryGatePolicy::allows($enabled, $allowed, $activityIds);
             },
-            static fn(): int => Schema::configInt('latra_rate_per_minute', 300),
+            static fn(): int => Schema::configInt('latra_rate_per_minute', RelayRuntimePolicy::RATE_PER_MINUTE),
             static fn(string $body, string $key): array => $transport($body, $key),
         );
         return $flush->flush($limit, $emergencyOnly, $seconds);

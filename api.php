@@ -27,7 +27,11 @@ if (!Auth::check()) {
 }
 
 // Basic per-client rate limit (all api traffic).
-if (!Auth::rateLimit('api:' . Auth::clientKey(), 300, 60)) {
+if (!Auth::rateLimit(
+    \Latra\Domain\Security\RateLimitPolicy::apiKey(Auth::clientKey()),
+    \Latra\Domain\Security\RateLimitPolicy::API_PER_MINUTE,
+    \Latra\Domain\Security\RateLimitPolicy::API_WINDOW_SECONDS,
+)) {
     http_response_code(429);
     echo json_encode(['success' => false, 'error' => 'Rate limit exceeded. Try again shortly.']);
     exit;
@@ -59,7 +63,11 @@ if (in_array($action, $writeActions, true)) {
     if ($action !== 'latra_interrogate') {
         Auth::requireWrite();
     }
-    if (in_array($action, $pushActions, true) && !Auth::rateLimit('push:' . Auth::clientKey(), 500, 86400)) {
+    if (in_array($action, $pushActions, true) && !Auth::rateLimit(
+        \Latra\Domain\Security\RateLimitPolicy::pushKey(Auth::clientKey()),
+        \Latra\Domain\Security\RateLimitPolicy::PUSH_PER_DAY,
+        \Latra\Domain\Security\RateLimitPolicy::PUSH_WINDOW_SECONDS,
+    )) {
         http_response_code(429);
         echo json_encode(['success' => false, 'error' => 'Daily push limit reached.']);
         exit;

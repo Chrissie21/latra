@@ -59,7 +59,9 @@ class Scheduler {
     }
 
     private static function jobPoll(): int {
-        return self::polling()->ordinary(Schema::configInt('poll_interval_seconds', 180));
+        return self::polling()->ordinary(
+            Schema::configInt('poll_interval_seconds', \Latra\Domain\Scheduling\SchedulePolicy::pollIntervalSeconds())
+        );
     }
 
     private static function jobEmergencyPoll(): int {
@@ -77,7 +79,11 @@ class Scheduler {
 
     /** Relay-only flush with the original work and time budgets. */
     private static function jobFlush(bool $emergencyOnly): int {
-        return RelayRuntime::flush($emergencyOnly ? 40 : 80, $emergencyOnly, 120);
+        return RelayRuntime::flush(
+            \Latra\Domain\Collection\RelayRuntimePolicy::flushLimit($emergencyOnly),
+            $emergencyOnly,
+            \Latra\Domain\Collection\RelayRuntimePolicy::flushSeconds(),
+        );
     }
 
     private static function jobFuelReport(): int {
@@ -113,7 +119,7 @@ class Scheduler {
             static fn(int $days): int => Retention::archiveMessages($days), static fn(): int => self::purgeDelivered(),
             (new \Latra\Infrastructure\Maintenance\FilesystemLogPruner(LOGS_DIR))->before(...),
             static fn(): int => time(),
-        ))->run(Schema::configInt('retention_days', 90));
+        ))->run(Schema::configInt('retention_days', \Latra\Domain\Maintenance\RetentionPolicy::defaultDays()));
     }
 
     /** Honor the original hour-based purge policy and its existing scheduled job. */

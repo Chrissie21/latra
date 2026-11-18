@@ -3,6 +3,12 @@ namespace Latra\Domain\Maintenance;
 
 final class RetentionPolicy
 {
+    /** Hot message_log retention when `retention_days` is not configured. */
+    public static function defaultDays(): int
+    {
+        return 90;
+    }
+
     public static function hourlyCutoff(int $now, int $hours): string
     {
         return gmdate('Y-m-d H:i:s', $now - max(1, $hours) * 3600);

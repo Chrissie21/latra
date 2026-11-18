@@ -7,9 +7,8 @@ if (isset($options['help'])) {
     echo "Usage: php bin/relay.php --vehicle=ID [--from=EPOCH --to=EPOCH | --status | --recover-review]\n";
     echo "Enroll: --vehicle=ID --enroll --profile=generic|teltonika-fmb\n";
     echo "  --max-records=N --max-bytes=N --max-pending-records=N --max-pending-bytes=N\n";
-    echo "Apply migrations/009_durable_relay.sql first. Collection uses enrolled budgets and existing activity rules.\n";
-    echo "Apply migrations/010_relay_review_recovery.sql before --recover-review. Recovery never sends to LATRA.\n";
-    echo "Apply migrations/011_relay_review_schedule.sql before collection/delivery; review rows have no retry schedule.\n";
+    echo "Relay schema (durable queue, identity and enrollment) is created by the installer; apply\n";
+    echo "migrations/009-011 only on a database that predates them. Recovery never sends to LATRA.\n";
     echo "Enrollment does not enable activities or alter schedules. This command never sends to LATRA.\n";
     exit;
 }
@@ -47,7 +46,8 @@ try {
         $to = isset($options['to']) ? relayArgument($options, 'to', 0) : null;
         $settings = RelayRuntime::settings($vehicleId);
         $allowed = RelayRuntime::allowedActivities($vehicleId);
-        $result = RelayRuntime::collect($vehicle, Schema::configInt('poll_interval_seconds', 180), (int) $settings['max_records'],
+        $result = RelayRuntime::collect($vehicle, Schema::configInt('poll_interval_seconds',
+            \Latra\Domain\Scheduling\SchedulePolicy::pollIntervalSeconds()), (int) $settings['max_records'],
             ':poll', $allowed, null, $from, $to);
         echo json_encode($result + RelayRuntime::status($vehicle), JSON_THROW_ON_ERROR) . "\n";
     }

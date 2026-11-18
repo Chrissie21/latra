@@ -7,6 +7,9 @@ final class SchedulePolicy
     public static function failedJobDelay(): int { return 30; }
     public static function bucketDelay(): int { return 180; }
 
+    /** Normal polling cadence when `poll_interval_seconds` is not configured. */
+    public static function pollIntervalSeconds(): int { return 180; }
+
     public static function bucketResult(array $stats): array
     {
         $failed = (int) ($stats['failed'] ?? 0);
