@@ -14,7 +14,7 @@ function auditFiles(string $pattern): array {
     return $files;
 }
 $entryPoints = array_merge(
-    [dirname(__DIR__) . '/api.php', dirname(__DIR__) . '/cron.php'],
+    [dirname(__DIR__) . '/api.php', dirname(__DIR__) . '/cron.php', dirname(__DIR__) . '/config.php'],
     auditFiles(dirname(__DIR__) . '/bin/*.php'),
     auditFiles(dirname(__DIR__) . '/scripts/*.php'),
 );
@@ -47,6 +47,13 @@ foreach ($adapters as $file) {
     }
     if (preg_match('/Database::(fetch|fetchAll)\(/', $source)) {
         auditFail('includes/' . basename($file) . ' still reads through raw Database helpers');
+    }
+}
+// The web UI was removed by owner decision: the bootstrap must not carry its assets.
+$config = (string) file_get_contents($root . '/config.php');
+foreach (['openstreetmap', 'cdnjs', 'jsdelivr', 'fonts.googleapis', 'fonts.gstatic', 'code.jquery', 'unpkg'] as $origin) {
+    if (stripos($config, $origin) !== false) {
+        auditFail('config.php still allows a removed UI asset origin: ' . $origin);
     }
 }
 // Hosted jobs must reference the current files, including syntax-only checks.

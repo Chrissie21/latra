@@ -6,7 +6,6 @@ if (PHP_SAPI !== 'cli') {
     exit;
 }
 require_once __DIR__ . '/../config.php';
-require_once __DIR__ . '/../includes/Database.php';
 try {
     $removed = Retention::maintain();
     echo "maintain: removed $removed completed historical rows; unresolved work preserved.\n";

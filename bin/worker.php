@@ -1,13 +1,6 @@
 <?php
 
 require_once __DIR__ . '/../config.php';
-require_once __DIR__ . '/../includes/Database.php';
-require_once __DIR__ . '/../includes/WialonAPI.php';
-require_once __DIR__ . '/../includes/LatraMapper.php';
-require_once __DIR__ . '/../includes/GpsValidator.php';
-require_once __DIR__ . '/../includes/GpsMonitor.php';
-require_once __DIR__ . '/../includes/DeviceMonitor.php';
-require_once __DIR__ . '/../includes/EmergencyHandler.php';
 
 if (function_exists('pcntl_async_signals')) {
     pcntl_async_signals(true);

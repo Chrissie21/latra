@@ -6,13 +6,6 @@
  *   * * * * * /usr/bin/php /path/to/cron.php
  */
 require_once __DIR__ . '/config.php';
-require_once __DIR__ . '/includes/Database.php';
-require_once __DIR__ . '/includes/WialonAPI.php';
-require_once __DIR__ . '/includes/LatraMapper.php';
-require_once __DIR__ . '/includes/GpsValidator.php';
-require_once __DIR__ . '/includes/GpsMonitor.php';
-require_once __DIR__ . '/includes/DeviceMonitor.php';
-require_once __DIR__ . '/includes/EmergencyHandler.php';
 
 // If the DB just came back (or went down), wait briefly instead of dying.
 if (!Database::await(3, 2)) {

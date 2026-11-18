@@ -74,6 +74,7 @@ if (FORCE_HTTPS
 
 // Database Configuration
 define('DB_HOST', envValue('DB_HOST', '127.0.0.1'));
+define('DB_PORT', envValue('DB_PORT', ''));
 define('DB_NAME', envValue('DB_NAME', 'latra_wialon'));
 define('DB_USER', envValue('DB_USER', 'root'));
 define('DB_PASS', envValue('DB_PASS', ''));
@@ -108,7 +109,8 @@ if (PHP_SAPI !== 'cli' && !headers_sent()) {
     header('X-Content-Type-Options: nosniff');
     header('X-Frame-Options: DENY');
     header('Referrer-Policy: strict-origin-when-cross-origin');
-    header("Content-Security-Policy: default-src 'self'; img-src 'self' data: https://*.tile.openstreetmap.org https://server.arcgisonline.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://code.jquery.com https://unpkg.com; connect-src 'self' https://nominatim.openstreetmap.org");
+    // API-only surface: no page, asset or third-party origin is loaded any more.
+    header("Content-Security-Policy: default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
     if (!empty($_SERVER['HTTPS']) || ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https') {
         header('Strict-Transport-Security: max-age=31536000; includeSubDomains');
     }
@@ -128,8 +130,3 @@ if (session_status() === PHP_SESSION_NONE) {
 }
 
 require_once __DIR__ . '/includes/autoload.php';
-
-// Create includes directory if not exists
-if (!is_dir(__DIR__ . '/includes')) {
-    mkdir(__DIR__ . '/includes', 0755, true);
-}

@@ -132,7 +132,16 @@ function queueMessage(int $id): array {
     $message = ['id' => $id, 'vehicle_id' => 1, 'activity_id' => 2, 'idempotency_key' => 'test-' . $id];
     $body = ['items' => [['activity_id' => 2, 'synthetic_id' => $id]]];
     // Historical outbox rows are fixture data, never produced by the relay runtime.
-    Database::query("INSERT INTO outbox (message_id,vehicle_id,activity_id,idempotency_key,payload,status,next_attempt_at)
-        VALUES (?,1,2,?,?,'pending',?)", [$id, 'test-' . $id, json_encode($body), gmdate(DATE_FORMAT)]);
-    return [$message, $body, (int) Database::getInstance()->lastInsertId()];
+    // Database::insert reads lastInsertId immediately: mysqlnd resets it on the next
+    // statement, and getInstance() runs a health ping before returning.
+    $outboxId = Database::insert('outbox', [
+        'message_id' => $id,
+        'vehicle_id' => 1,
+        'activity_id' => 2,
+        'idempotency_key' => 'test-' . $id,
+        'payload' => json_encode($body),
+        'status' => 'pending',
+        'next_attempt_at' => gmdate(DATE_FORMAT),
+    ]);
+    return [$message, $body, $outboxId];
 }

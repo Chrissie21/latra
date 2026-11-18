@@ -14,7 +14,8 @@
         "phpstan/phpstan": "^2.1"
     },
     "scripts": {
-        "analyse": "phpstan analyse --memory-limit=512M"
+        "analyse": "phpstan analyse --memory-limit=512M",
+        "test": "php tests/run-all.php"
     },
     "config": {
         "sort-packages": true
