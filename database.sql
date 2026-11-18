@@ -1,5 +1,13 @@
--- LATRA-Wialon Integration Database Schema
+-- LATRA-Wialon Integration Database Schema (base bootstrap)
 -- Created: 2026-08-24
+--
+-- This dump is the source of the core tables and reference data only. Everything
+-- added since then is applied automatically by Schema::ensure() (see
+-- src/Infrastructure/Persistence/DatabaseSchema.php), whose VERSION tracks the
+-- newest file in migrations/. Fresh install:
+--     mysql -u root latra_wialon < database.sql && php scripts/install.php
+-- tests/schema-parity.php fails if the dump, the migrations and the runtime
+-- bootstrap ever disagree.
 
 CREATE DATABASE IF NOT EXISTS latra_wialon CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE latra_wialon;

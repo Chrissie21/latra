@@ -5,8 +5,6 @@
  *   php scripts/install.php [username] [password]
  */
 require_once __DIR__ . '/../config.php';
-require_once __DIR__ . '/../includes/Database.php';
-require_once __DIR__ . '/../includes/Auth.php';
 
 if (PHP_SAPI !== 'cli') {
     http_response_code(404);
@@ -33,7 +31,18 @@ if (!preg_match('/^APP_KEY=.+$/m', $env) || preg_match('/^APP_KEY=\s*$/m', $env)
     echo "Generated APP_KEY.\n";
 }
 
-Schema::ensure();
+try {
+    $database = Database::getInstance();
+    $dump = new \Latra\Infrastructure\Persistence\BaseSchemaDump(dirname(__DIR__) . '/database.sql');
+    if (!$dump->isInstalled($database)) {
+        $applied = $dump->apply($database);
+        echo "Imported base schema ({$applied} statements).\n";
+    }
+    Schema::ensure();
+} catch (RuntimeException $e) {
+    fwrite(STDERR, 'Schema bootstrap failed: ' . $e->getMessage() . "\n");
+    exit(1);
+}
 
 $username = $argv[1] ?? 'admin';
 $password = $argv[2] ?? bin2hex(random_bytes(8));

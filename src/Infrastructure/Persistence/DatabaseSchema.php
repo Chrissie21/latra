@@ -10,7 +10,7 @@ namespace Latra\Infrastructure\Persistence;
  * failing; the compatibility `Schema` facade delegates here.
  */
 class DatabaseSchema {
-    public const VERSION = 9;
+    public const VERSION = 11;
 
     public static function ensure(): void {
         static $done = false;
@@ -19,8 +19,10 @@ class DatabaseSchema {
         }
         $done = true;
 
+        self::assertBaseSchema();
         self::ensureAutomation();
         self::ensureEventSchema();
+        self::ensureRelay();
         \Auth::ensureTables();
         \Vault::ensureTable();
 
@@ -671,6 +673,94 @@ class DatabaseSchema {
                 [$key, $value, $description]
             );
         }
+    }
+
+    /**
+     * The base dump (`database.sql`) is the only source of the core tables and
+     * reference data. Everything below it is additive, so a missing base is a
+     * setup step, not a schema upgrade: say so instead of failing inside a seed.
+     */
+    private static function assertBaseSchema(): void
+    {
+        $missing = [];
+        foreach (['config', 'vehicles', 'activity_definitions', 'message_log', 'push_log'] as $table) {
+            $row = \Database::fetch(
+                "SELECT COUNT(*) AS c FROM information_schema.tables
+                 WHERE table_schema = DATABASE() AND table_name = ?",
+                [$table]
+            );
+            if ((int) ($row['c'] ?? 0) === 0) {
+                $missing[] = $table;
+            }
+        }
+        if ($missing !== []) {
+            throw new \RuntimeException(
+                'Base schema missing (' . implode(', ', $missing) . '). Run scripts/install.php, which imports '
+                . 'database.sql first, or import that dump into the configured database and retry. Automatic '
+                . 'bootstrap only adds tables and columns to an existing base.'
+            );
+        }
+    }
+
+    /**
+     * Durable relay tables, required by the only delivery architecture.
+     *
+     * These mirror migrations/009-011. They are created here as well so a fresh
+     * install is relay-capable without an operator applying SQL by hand; migrations
+     * stay for deployments that already exist. `source_key` and the nullable
+     * `next_attempt` are the post-010/011 shapes.
+     */
+    public static function ensureRelay(): void
+    {
+        \Database::query("CREATE TABLE IF NOT EXISTS relay_units (
+            unit VARCHAR(64) PRIMARY KEY,
+            collected_through BIGINT NULL,
+            delivered_time BIGINT NULL,
+            attempted_time BIGINT NULL,
+            state_json TEXT NULL
+        ) ENGINE=InnoDB");
+
+        \Database::query("CREATE TABLE IF NOT EXISTS relay_vehicle_settings (
+            vehicle_id INT PRIMARY KEY,
+            profile VARCHAR(32) NOT NULL,
+            max_records INT NOT NULL,
+            max_bytes INT NOT NULL,
+            max_pending_records INT NOT NULL,
+            max_pending_bytes INT NOT NULL,
+            is_enabled TINYINT NOT NULL DEFAULT 0
+        ) ENGINE=InnoDB");
+
+        \Database::query("CREATE TABLE IF NOT EXISTS relay_identity (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            delivery_key CHAR(64) NOT NULL UNIQUE,
+            unit VARCHAR(64) NOT NULL,
+            source_time BIGINT NOT NULL,
+            state VARCHAR(16) NOT NULL,
+            source_key CHAR(64) NULL
+        ) ENGINE=InnoDB");
+
+        \Database::query("CREATE TABLE IF NOT EXISTS relay_pending (
+            id BIGINT AUTO_INCREMENT PRIMARY KEY,
+            delivery_key CHAR(64) NOT NULL UNIQUE,
+            unit VARCHAR(64) NOT NULL,
+            source_time BIGINT NOT NULL,
+            payload MEDIUMTEXT NOT NULL,
+            status VARCHAR(16) NOT NULL,
+            attempts INT NOT NULL DEFAULT 0,
+            next_attempt BIGINT NULL DEFAULT 0,
+            last_error VARCHAR(500) NULL,
+            INDEX unit_head (unit, source_time, id)
+        ) ENGINE=InnoDB");
+
+        \Database::query("CREATE TABLE IF NOT EXISTS relay_activity_identity (
+            source_key CHAR(64) NOT NULL,
+            activity_id INT NOT NULL,
+            delivery_key CHAR(64) NOT NULL,
+            PRIMARY KEY (source_key, activity_id)
+        ) ENGINE=InnoDB");
+
+        // Migration 010 for databases created before the cross-stream source key.
+        self::addColumn('relay_identity', 'source_key CHAR(64) NULL');
     }
 
     private static function hasColumn(string $table, string $column): bool
