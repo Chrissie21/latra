@@ -101,6 +101,12 @@ function request(string $root, string $action, bool $sse = false, array $environ
 }
 function expect(bool $ok, string $why): void { if (!$ok) throw new RuntimeException($why); }
 try {
+    foreach (['bulk_fetch_messages', 'bulk_push_activity'] as $bulkAction) {
+        $malformed = json_decode(request($root, $bulkAction, true, [], ['vehicle_ids' => ['1']]), true, 512, JSON_THROW_ON_ERROR);
+        expect(($malformed['success'] ?? null) === false
+            && ($malformed['error'] ?? '') === 'vehicle_ids must be a comma-separated string',
+            'Malformed bulk selection must return a client error rather than crash');
+    }
     $sync = json_decode(request($root, 'sync_wialon'),true,512,JSON_THROW_ON_ERROR);
     expect($sync === ['success'=>true,'message'=>'Synced: 2 new, 3 updated'], 'Fleet sync API did not use the shared application flow');
     $syncOne = json_decode(request($root, 'sync_single_vehicle',false,[],['id'=>1]),true,512,JSON_THROW_ON_ERROR);

@@ -74,6 +74,17 @@ if (in_array($action, $writeActions, true)) {
     }
 }
 
+/** Parse the existing EventSource CSV contract before starting an SSE response. */
+function bulkVehicleIds(): array {
+    $raw = $_GET['vehicle_ids'] ?? '';
+    if (!is_string($raw)) {
+        throw new InvalidArgumentException('vehicle_ids must be a comma-separated string');
+    }
+    $ids = array_filter(array_map('intval', explode(',', $raw)));
+    if (!$ids) throw new InvalidArgumentException('No vehicle IDs provided');
+    return $ids;
+}
+
 function operatorReadRepository(): \Latra\Application\Operations\OperatorReadRepository {
     return new \Latra\Infrastructure\Persistence\DatabaseOperatorReadRepository();
 }
@@ -279,17 +290,14 @@ try {
             break;
 
         case 'bulk_fetch_messages':
-            $vehicleIds=array_filter(array_map('intval',explode(',',$_GET['vehicle_ids'] ?? '')));
-            if (!$vehicleIds) throw new Exception('No vehicle IDs provided');
+            $vehicleIds = bulkVehicleIds();
             startSse();
             operatorFetch()->bulk($vehicleIds,static fn(array $event) => sendSse($event));
             break;
 
         case 'bulk_push_activity':
-            $rawIds = $_GET['vehicle_ids'] ?? '';
-            $vehicleIds = array_filter(array_map('intval', explode(',', $rawIds)));
+            $vehicleIds = bulkVehicleIds();
             $aid = intval($_GET['activity_id'] ?? 0);
-            if (empty($vehicleIds)) throw new Exception('No vehicle IDs provided');
             if (!$aid) throw new Exception('Activity ID required');
             startSse();
             operatorBulkPush()->run($vehicleIds, $aid, static fn(array $event) => sendSse($event));
