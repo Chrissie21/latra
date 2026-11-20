@@ -87,3 +87,23 @@ nativeRepositoryExpect($first['queued']===1 && $again['queued']===0
     && (int)$observer->query("SELECT COUNT(*) FROM relay_pending WHERE unit LIKE 'manual:wialon:123:%'")->fetchColumn()===1,
     'Native manual submission lost owner identity or replay deduplication');
 echo "PASS native manual-submission composition, owner resolution and replay identity\n";
+
+// Run evidence must recover from a dead process without orphaning another live owner.
+$owner = nativeRepositoryDatabase();
+$owner->query("SELECT GET_LOCK('latra-job-synthetic_held',0)")->fetchColumn();
+try {
+    $observer->exec("INSERT INTO job_runs(job_key,status,started_at) VALUES
+        ('synthetic_dead','running',NOW()),('synthetic_held','running',NOW())");
+    $maintenance = new Latra\Infrastructure\Persistence\PdoMaintenanceRepository($observer);
+    $maintenance->reconcileJobLocks();
+    $states = $observer->query("SELECT job_key,status FROM job_runs WHERE job_key IN ('synthetic_dead','synthetic_held')")
+        ->fetchAll(PDO::FETCH_KEY_PAIR);
+    nativeRepositoryExpect($states === ['synthetic_dead'=>'orphaned','synthetic_held'=>'running'],
+        'Native recovery failed to distinguish dead and live advisory-lock owners');
+} finally {
+    $owner->query("SELECT RELEASE_LOCK('latra-job-synthetic_held')")->fetchColumn();
+}
+$maintenance->reconcileJobLocks();
+nativeRepositoryExpect($observer->query("SELECT status FROM job_runs WHERE job_key='synthetic_held'")->fetchColumn() === 'orphaned',
+    'Native recovery failed after the live owner released its lock');
+echo "PASS native scheduler recovery preserves live ownership and closes abandoned run evidence\n";

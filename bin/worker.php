@@ -26,7 +26,14 @@ while (true) {
         fwrite(STDERR, "[" . date(DATE_FORMAT) . "] event engine error: " . $e->getMessage() . "\n");
         Logger::error('worker.event_engine', ['error' => $e->getMessage()]);
     }
-    sleep($cadence->sleepSeconds(EmergencyHandler::activeCount()));
+    $activeEmergencies = 0;
+    try {
+        $activeEmergencies = EmergencyHandler::activeCount();
+    } catch (Throwable $e) {
+        fwrite(STDERR, "[" . date(DATE_FORMAT) . "] cadence read error: " . $e->getMessage() . "\n");
+        Logger::error('worker.cadence', ['error' => $e->getMessage()]);
+    }
+    sleep($cadence->sleepSeconds($activeEmergencies));
 
     if (hrtime(true) >= $nextJobsAt) {
         $nextJobsAt = hrtime(true) + $cadence->jobIntervalNanos();

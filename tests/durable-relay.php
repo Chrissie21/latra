@@ -273,7 +273,20 @@ try {
         [$p] = worker('deliver', $stage);
         killWorker($p);
         check(countRows($db, 'relay_pending') === 1, 'Crash lost pending payload');
-        check($relay->deliver('synthetic-A', 1001, transport($url)) === 'sent', 'Delivery restart failed');
+        // Process exit and MariaDB's disconnect/rollback cleanup are asynchronous
+        // across a container network. Prove bounded lock release before retrying
+        // the production repository's deliberately nonblocking acquisition.
+        $lock = 'relay:' . substr(hash('sha256', 'synthetic-A'), 0, 56);
+        $probe = $db->prepare('SELECT IS_FREE_LOCK(?)');
+        $deadline = microtime(true) + 8;
+        do {
+            $probe->execute([$lock]);
+            $released = (int) $probe->fetchColumn() === 1;
+            if (!$released) usleep(10000);
+        } while (!$released && microtime(true) < $deadline);
+        check($released, 'Dead worker delivery lock was not released at ' . $stage);
+        $restarted = $relay->deliver('synthetic-A', 1001, transport($url));
+        check($restarted === 'sent', 'Delivery restart failed at ' . $stage . ': ' . $restarted);
         check(countRows($db, 'relay_pending') === 0 && countRows($receiver, 'accepted') === 1, 'Crash replay duplicated receiver effect');
     }
     echo "PASS SIGKILL before HTTP/after acceptance/during cleanup; restart retains intent and receiver deduplicates\n";

@@ -11,7 +11,16 @@ final class PdoMaintenanceRepository
         $stmt = $this->pdo->query(
             "UPDATE jobs SET locked_until = NULL WHERE locked_until IS NOT NULL AND locked_until < NOW()"
         );
-        return $stmt->rowCount();
+        $cleared = $stmt->rowCount();
+        // A killed process releases its advisory lock but cannot finish its run
+        // record. Lock ownership, rather than a guessed timeout, distinguishes
+        // abandoned runs without interfering with jobs that are still executing.
+        $orphaned = $this->pdo->exec(
+            "UPDATE job_runs SET status='orphaned', finished_at=COALESCE(finished_at,NOW()),
+             error=COALESCE(error,'Worker no longer owns the job lock')
+             WHERE status='running' AND IS_FREE_LOCK(CONCAT('latra-job-',job_key))=1"
+        );
+        return $cleared + $orphaned;
     }
 
     public function rollupDaily(): int {
