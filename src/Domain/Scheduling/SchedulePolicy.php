@@ -12,8 +12,10 @@ final class SchedulePolicy
 
     public static function bucketResult(array $stats): array
     {
-        $failed = (int) ($stats['failed'] ?? 0);
-        $success = (int) ($stats['pushed'] ?? 0);
+        $failed = (int) ($stats['failed'] ?? 0) + (int) ($stats['rejected'] ?? 0);
+        // Relay buckets collect intent; delivery runs independently. Keep the
+        // pushed fallback for compatibility callers supplying the former shape.
+        $success = (int) ($stats['inserted'] ?? $stats['pushed'] ?? 0);
         $skipped = (int) ($stats['skipped'] ?? 0) + (int) ($stats['denied'] ?? 0);
         $reason = $skipped > 0
             ? ((int) ($stats['denied'] ?? 0) > 0

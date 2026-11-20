@@ -81,8 +81,8 @@ final class DatabaseOperatorActionRepository implements OperatorActionRepository
         return [
             'last_run_at' => \Database::fetch('SELECT MAX(started_at) AS s FROM automation_runs')['s'] ?? null,
             'enabled_buckets' => (int) (\Database::fetch('SELECT COUNT(*) AS c FROM automation_buckets WHERE is_enabled = 1')['c'] ?? 0),
-            'backlog' => (int) (\Database::fetch("SELECT COUNT(*) AS c FROM message_log WHERE latra_status = 'pending'")['c'] ?? 0),
-            'dead_letter' => (int) (\Database::fetch("SELECT COUNT(*) AS c FROM message_log WHERE latra_status IN ('manual','dead')")['c'] ?? 0),
+            'backlog' => (int) (\Database::fetch("SELECT COUNT(*) AS c FROM relay_pending WHERE status = 'pending'")['c'] ?? 0),
+            'dead_letter' => (int) (\Database::fetch("SELECT COUNT(*) AS c FROM relay_pending WHERE status = 'review'")['c'] ?? 0),
         ];
     }
 }

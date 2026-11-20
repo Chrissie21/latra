@@ -107,4 +107,9 @@ try { $work->bucket($bucket); throw new LogicException('Expected reservation fai
 catch (RuntimeException $error) { scheduleAssert($error->getMessage() === 'reservation failed', 'Wrong reservation failure'); }
 scheduleAssert($locks->held === [], 'Failed reservation leaked bucket lock');
 scheduleAssert(SchedulePolicy::jobDelay(-1) === 1 && SchedulePolicy::jobDelay(180) === 180, 'Job timing policy changed');
+$relayResult = SchedulePolicy::bucketResult([
+    'inserted'=>4, 'queued'=>5, 'rejected'=>1, 'pushed'=>0, 'failed'=>0, 'skipped'=>1,
+]);
+scheduleAssert($relayResult['success'] === 4 && $relayResult['failed'] === 1 && $relayResult['total'] === 6,
+    'Relay collection must count queued valid reports and preserve review failures instead of reporting zero work');
 echo "PASS scheduler locks, enable gate, run accounting, retry/cadence and failed-setup cleanup\n";
