@@ -33,6 +33,10 @@ LATRA_RELAY_TEST_USER=root LATRA_RELAY_TEST_PASSWORD=… LATRA_RELAY_TEST_ALLOW_
 
 - `bootstrap.php` — disposable fixture constants shared by the native suites.
 - `relay-mock.php` / `mock-latra.php` — loopback receivers started by a parent suite.
+- `latra-receiver.php` — loopback stand-in LATRA endpoint for live delivery checks; appends each
+  request to a private text log (`LATRA_RECEIVER_LOG`), including exact bytes in `body_base64`.
+  Explicit `LATRA_RECEIVER_ALLOW` ranges permit an isolated container network. Duplicate
+  detection is serialized across Apache workers; this does not prove LATRA idempotency.
 - `collection-fixture.json` — fixture data.
 
 ## Suites that need a disposable database

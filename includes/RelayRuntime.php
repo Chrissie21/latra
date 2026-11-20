@@ -149,11 +149,37 @@ final class RelayRuntime {
         );
     }
 
-    /** No real LATRA transport is enabled during cutover. Mock delivery is an explicit setting. */
+    /**
+     * Mock delivery stays the default. The real endpoint requires the explicit
+     * relay_delivery_transport=latra setting plus configured credentials, so a
+     * deployment can never reach LATRA by accident.
+     */
+    private static function deliveryTransport(): ?\Closure {
+        $mode = Schema::config('relay_delivery_transport', 'mock');
+        if ($mode === 'mock') {
+            $url = Schema::config('relay_mock_url', '');
+            if ($url === '') return null;
+            $transport = new \Latra\Infrastructure\Delivery\LoopbackRelayTransport($url);
+            return static fn(string $body, string $key): array => $transport($body, $key);
+        }
+        if ($mode !== 'latra') {
+            throw new RuntimeException('Unsupported relay delivery transport: ' . $mode);
+        }
+        $url = Vault::latraUrl();
+        if ($url === '') {
+            throw new RuntimeException('The LATRA transport requires LATRA_API_URL to be configured');
+        }
+        $transport = new \Latra\Infrastructure\Delivery\LatraRelayTransport(
+            $url,
+            Vault::latraUser(),
+            Vault::latraPass(),
+        );
+        return static fn(string $body, string $key): array => $transport($body, $key);
+    }
+
     public static function flush(int $limit, bool $emergencyOnly, int $seconds): int {
-        $url = Schema::config('relay_mock_url', '');
-        if ($url === '') return 0;
-        $transport = new \Latra\Infrastructure\Delivery\LoopbackRelayTransport($url);
+        $transport = self::deliveryTransport();
+        if ($transport === null) return 0;
         $activeUnit = null;
         $activeVehicle = null;
         $findVehicle = static function (string $unit) use (&$activeUnit, &$activeVehicle): ?array {
