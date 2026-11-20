@@ -15,13 +15,17 @@ $db = new PDO($dsn, getenv('LATRA_RELAY_TEST_USER') ?: 'root', getenv('LATRA_REL
 if ($db->query('SELECT DATABASE()')->fetchColumn() !== $match[1]) throw new RuntimeException('Wrong database');
 (new ReflectionProperty(Database::class, 'instance'))->setValue(null, $db);
 (new ReflectionProperty(Database::class, 'sensitiveConfigScrubbed'))->setValue(null, true);
+// This database is disposable and shared with the sibling relay suites, which may have left
+// any part of the real schema behind. Start from empty so a repeated run proves the same thing
+// as the first one, then rebuild the relay schema and the fixture this suite needs.
+$db->exec('SET FOREIGN_KEY_CHECKS=0');
+foreach ($db->query('SHOW TABLES')->fetchAll(PDO::FETCH_COLUMN) as $leftover) {
+    $db->exec('DROP TABLE IF EXISTS `' . str_replace('`', '``', (string) $leftover) . '`');
+}
+$db->exec('SET FOREIGN_KEY_CHECKS=1');
 $db->exec(file_get_contents(__DIR__ . '/../migrations/009_durable_relay.sql'));
 $db->exec(file_get_contents(__DIR__ . '/../migrations/010_relay_review_recovery.sql'));
 $db->exec(file_get_contents(__DIR__ . '/../migrations/011_relay_review_schedule.sql'));
-foreach (['relay_pending', 'relay_activity_identity', 'relay_identity', 'relay_units', 'relay_vehicle_settings'] as $table) $db->exec('DELETE FROM ' . $table);
-foreach (['config','activity_mappings','automation_buckets','bucket_vehicles','overspeed_config','vehicles','message_log','outbox'] as $table) {
-    $db->exec('DROP TABLE IF EXISTS ' . $table);
-}
 $db->exec('CREATE TABLE config (config_key VARCHAR(100) PRIMARY KEY, config_value TEXT)');
 $db->exec('CREATE TABLE activity_mappings (vehicle_id INT, activity_id INT, is_enabled INT)');
 $db->exec('CREATE TABLE automation_buckets (id INT PRIMARY KEY, activity_id INT, is_enabled INT)');

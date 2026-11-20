@@ -103,11 +103,15 @@ jobs:
           php tests/entrypoint-audit.php
           php tests/retired-paths.php
           php tests/scheduler-lock.php
+          php tests/scheduler-recovery.php
           php tests/worker-cadence.php
+          php tests/worker-outage.php
+          php tests/relay-latra-transport.php
           php tests/maintenance-jobs.php
           php tests/data-cleanup.php
           php tests/operator-evidence.php
           php tests/operator-actions.php
+          php tests/relay-health.php
           php tests/operator-provisioning.php
           php tests/runtime-adapters.php
           php tests/activity-addon.php
