@@ -79,7 +79,10 @@ final class RunScheduledWork
                         'last_status'=>'failed', 'last_error'=>$error->getMessage(),
                     ]);
                     ($this->notify)('job_failed', ['job'=>$key]);
-                } catch (Throwable $ignored) {}
+                } catch (Throwable $bookkeepingError) {
+                    // The job already failed; losing its bookkeeping must still be visible.
+                    ($this->log)('job.bookkeeping_failed', ['job'=>$key, 'error'=>$bookkeepingError->getMessage()], true);
+                }
             }
         } finally {
             $this->release($lock);
@@ -155,6 +158,8 @@ final class RunScheduledWork
     private function stamp(int $delay = 0): string { return $this->clock->format($this->clock->now() + $delay); }
     private function release(string $lock): void
     {
-        try { $this->locks->release($lock); } catch (Throwable $ignored) {}
+        try { $this->locks->release($lock); } catch (Throwable $error) {
+            ($this->log)('scheduler.lock_release_failed', ['lock'=>$lock, 'error'=>$error->getMessage()], true);
+        }
     }
 }

@@ -16,7 +16,7 @@ class Scheduler {
             new \Latra\Infrastructure\Scheduling\MysqlScheduleLocks($pdo),
             new \Latra\Infrastructure\Scheduling\SystemScheduleClock(DATE_FORMAT),
             static fn(): bool => Schema::config('scheduler_enabled', '1') === '1',
-            static fn(string $key): int => self::execute($key),
+            self::jobs()->run(...),
             static fn(array $bucket): array => BucketRunner::run($bucket),
             static function(string $event, array $context, bool $warning): void {
                 if ($warning) Logger::warn($event, $context); else Logger::error($event, $context);
@@ -26,21 +26,21 @@ class Scheduler {
         );
     }
 
-    private static function execute(string $key): int {
-        return match ($key) {
-            'reconcile' => self::jobReconcile(),
-            'fleet_sync' => self::jobFleetSync(),
-            'fuel_report' => self::jobFuelReport(),
-            'poll_messages' => self::jobPoll(),
-            'emergency_poll' => self::jobEmergencyPoll(),
-            'flush_outbox' => self::jobFlush(false),
-            'offline_sweep' => self::jobOffline(),
-            'backup' => self::jobBackup(),
-            'retention' => self::jobRetention(),
-            'purge_delivered' => self::purgeDelivered(),
-            'audit_rollup' => self::jobRollup(),
-            default => 0,
-        };
+    /** Registered scheduled jobs; key selection itself lives in Application. */
+    private static function jobs(): \Latra\Application\Scheduling\ScheduledJobDispatch {
+        return new \Latra\Application\Scheduling\ScheduledJobDispatch([
+            'reconcile' => self::jobReconcile(...),
+            'fleet_sync' => self::jobFleetSync(...),
+            'fuel_report' => self::jobFuelReport(...),
+            'poll_messages' => self::jobPoll(...),
+            'emergency_poll' => self::jobEmergencyPoll(...),
+            'flush_outbox' => static fn(): int => self::jobFlush(false),
+            'offline_sweep' => self::jobOffline(...),
+            'backup' => self::jobBackup(...),
+            'retention' => self::jobRetention(...),
+            'purge_delivered' => self::purgeDelivered(...),
+            'audit_rollup' => self::jobRollup(...),
+        ]);
     }
 
     /**

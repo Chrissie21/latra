@@ -97,6 +97,7 @@ jobs:
           php tests/fleet-sync.php
           php tests/relay-runtime-policy.php
           php tests/scheduling.php
+          php tests/scheduled-job-dispatch.php
           php tests/scheduling-repository.php
           php tests/retention-usecase.php
           php tests/database-boundary.php
