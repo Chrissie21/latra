@@ -8,8 +8,8 @@ use Latra\Application\Collection\WialonTransport;
 use Latra\Application\Collection\WialonWindowSession;
 
 /**
- * Wialon API client: session login/logout, unit queries, bounded message
- * windows and raw service calls over an injected transport.
+ * Wialon API client: session login/logout, fleet unit reads and bounded message
+ * windows over an injected transport.
  *
  * Bounded window validation and paging live in the application use case
  * (`LoadWialonWindow`) and the domain policy, so this adapter only encodes the
@@ -19,7 +19,6 @@ class WialonApiClient implements WialonWindowSession
 {
     private string $baseUrl;
     private ?string $sid = null;
-    private int $lastError = 0;
 
     public function __construct(
         string $baseUrl,
@@ -47,9 +46,9 @@ class WialonApiClient implements WialonWindowSession
         );
 
         if (isset($data['error'])) {
-            $this->lastError = (int) $data['error'];
-            if ($this->lastError !== 0) {
-                error_log("Wialon API Error {$this->lastError}: " . ($data['reason'] ?? 'Unknown'));
+            $errorCode = (int) $data['error'];
+            if ($errorCode !== 0) {
+                error_log("Wialon API Error {$errorCode}: " . ($data['reason'] ?? 'Unknown'));
                 return null;
             }
         }
@@ -102,13 +101,6 @@ class WialonApiClient implements WialonWindowSession
         return $result['items'] ?? [];
     }
 
-    /** Single unit with name and position (flags 1025). */
-    public function getUnit(int $unitId): ?array
-    {
-        $result = $this->request('core/search_item', ['id' => $unitId, 'flags' => 1025]);
-        return $result['item'] ?? null;
-    }
-
     public function getMessages(int $unitId, int $from, int $to, int $limit = 100): array
     {
         $result = $this->request('messages/load_interval', [
@@ -121,12 +113,6 @@ class WialonApiClient implements WialonWindowSession
         ]);
 
         return $result['messages'] ?? [];
-    }
-
-    public function getLastMessages(int $unitId, int $limit = 10): array
-    {
-        $to = time();
-        return $this->getMessages($unitId, $to - 86400, $to, $limit);
     }
 
     /** Load one complete, bounded window in this session via the application use case. */
@@ -167,11 +153,6 @@ class WialonApiClient implements WialonWindowSession
         $this->request('messages/unload', []);
     }
 
-    public function getSensors(int $unitId): array
-    {
-        return $this->request('unit/get_sensors', ['itemId' => $unitId]) ?? [];
-    }
-
     /** Parameter name of the unit's "engine operation" sensor, trimmed; null when absent. */
     public function getEngineSensorParam(int $unitId): ?string
     {
@@ -191,19 +172,9 @@ class WialonApiClient implements WialonWindowSession
         return $result['item'] ?? null;
     }
 
-    public function rawRequest(string $svc, array $params = []): ?array
-    {
-        return $this->request($svc, $params);
-    }
-
     public function isLoggedIn(): bool
     {
         return $this->sid !== null;
-    }
-
-    public function getLastError(): int
-    {
-        return $this->lastError;
     }
 
     public function getSid(): ?string

@@ -9,13 +9,7 @@ interface EmergencyEventRepository
 
     public function activeForVehicle(int $vehicleId): ?array;
 
-    /** @return list<int> Ids of every active event of one type for a vehicle. */
-    public function activeIdsByType(int $vehicleId, string $eventType): array;
-
     public function activeCount(): int;
-
-    /** @return list<array<string,mixed>> Newest first, with vehicle identity. */
-    public function recent(int $limit): array;
 
     public function findById(int $eventId): ?array;
 

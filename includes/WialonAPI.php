@@ -5,7 +5,7 @@
  * Compatibility and composition boundary: protocol encoding, session handling
  * and unit/message queries live in the extracted infrastructure client, with
  * bounded-window validation in the domain policy and paging in the application
- * use case. The public method surface and constructor contract are unchanged.
+ * use case. The constructor contract is unchanged.
  */
 require_once __DIR__ . '/autoload.php';
 

@@ -102,27 +102,9 @@ final class EmergencyTestRepository implements EmergencyEventRepository
         return $this->events[$eventId] ?? null;
     }
 
-    public function activeIdsByType(int $vehicleId, string $eventType): array
-    {
-        $ids = [];
-        foreach ($this->events as $id => $event) {
-            if ((int) $event['vehicle_id'] === $vehicleId
-                && $event['event_type'] === $eventType
-                && $event['status'] === 'active') {
-                $ids[] = (int) $id;
-            }
-        }
-        return $ids;
-    }
-
     public function activeCount(): int
     {
         return count(array_filter($this->events, static fn(array $event): bool => $event['status'] === 'active'));
-    }
-
-    public function recent(int $limit): array
-    {
-        return array_slice(array_reverse(array_values($this->events)), 0, max(1, $limit));
     }
 
     public function create(array $event): int

@@ -12,10 +12,4 @@ final class ReadEmergencyEvents
     {
         return $this->repository->activeCount();
     }
-
-    /** @return list<array<string,mixed>> Newest first, with vehicle identity. */
-    public function recent(int $limit = 50): array
-    {
-        return $this->repository->recent($limit);
-    }
 }
