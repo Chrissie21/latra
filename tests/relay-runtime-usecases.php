@@ -34,7 +34,7 @@ final class RuntimeUseCaseRepository implements \Latra\Application\Collection\Re
     }
 
     // Unused by the bucket/event-cycle use cases exercised here.
-    public function relaySettings(int $vehicleId): ?array { return null; }
+    public function relaySettings(int $vehicleId): ?\Latra\Domain\Collection\RelaySettings { return null; }
     public function relayStatus(string $unit): array { return ['streams' => [], 'queue' => []]; }
     public function allowedBucketActivities(int $vehicleId): array { return []; }
     public function pendingUnits(int $now, int $limit): array { return []; }

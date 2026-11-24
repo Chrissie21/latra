@@ -8,6 +8,7 @@ foreach ([
     [new Latra\Domain\Exception\CapacityExceeded('full'),409,'capacity_exceeded',false],
     [new Latra\Domain\Exception\SourceUnavailable('partial page',1001),503,'source_unavailable',true],
     [new Latra\Domain\Exception\NotEnrolled('enroll first'),409,'not_enrolled',false],
+    [new Latra\Domain\Exception\InvalidConfiguration('missing LATRA_API_URL'),500,'invalid_configuration',false],
 ] as [$error,$status,$code,$retryable]) {
     $result=WorkflowFailurePresenter::present($error);
     if ($result!==['status'=>$status,'body'=>['success'=>false,'error'=>$error->getMessage(),'code'=>$code,'retryable'=>$retryable]]) {

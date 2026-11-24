@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Latra\Application\Collection;
 
+use Latra\Domain\Collection\RelaySettings;
+
 /**
  * Composition data required by the relay coordinator: enrollment budgets, stream
  * cursors, queue accounting, owning vehicle identity and activity gates.
@@ -16,7 +18,7 @@ interface RelayRuntimeRepository
     public function enabledEventActivities(): array;
 
     /** Enrolled relay settings for one vehicle, or null when not enrolled. */
-    public function relaySettings(int $vehicleId): ?array;
+    public function relaySettings(int $vehicleId): ?RelaySettings;
 
     /** Independent stream cursors plus unresolved/held/byte queue totals. */
     public function relayStatus(string $unit): array;

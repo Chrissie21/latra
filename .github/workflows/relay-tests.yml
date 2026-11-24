@@ -35,6 +35,7 @@ jobs:
         run: |
           php tests/architecture-boundaries.php
           php tests/relay-delivery-policy.php
+          php tests/relay-delivery-selection.php
           php tests/relay-delivery-service.php
           php tests/relay-delivery-port.php
           php tests/relay-flush-service.php
@@ -47,6 +48,7 @@ jobs:
           php tests/relay-stream-usecase.php
           php tests/relay-enrollment.php
           php tests/relay-runtime-usecases.php
+          php tests/relay-settings-type.php
           php tests/emergency-relay-status.php
           php tests/relay-recovery.php
           php tests/relay-review-mapping.php

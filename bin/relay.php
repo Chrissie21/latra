@@ -47,7 +47,7 @@ try {
         $settings = RelayRuntime::settings($vehicleId);
         $allowed = RelayRuntime::allowedActivities($vehicleId);
         $result = RelayRuntime::collect($vehicle, Schema::configInt('poll_interval_seconds',
-            \Latra\Domain\Scheduling\SchedulePolicy::pollIntervalSeconds()), (int) $settings['max_records'],
+            \Latra\Domain\Scheduling\SchedulePolicy::pollIntervalSeconds()), $settings->maxRecords,
             ':poll', $allowed, null, $from, $to);
         echo json_encode($result + RelayRuntime::status($vehicle), JSON_THROW_ON_ERROR) . "\n";
     }

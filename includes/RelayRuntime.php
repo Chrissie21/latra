@@ -7,6 +7,9 @@ use Latra\Application\Collection\CollectRelayEventCycle;
 use Latra\Domain\Collection\RelayDeliveryGatePolicy;
 use Latra\Domain\Collection\RelayIdentityPolicy;
 use Latra\Domain\Collection\RelayRuntimePolicy;
+use Latra\Domain\Collection\RelaySettings;
+use Latra\Domain\Delivery\RelayDeliveryTarget;
+use Latra\Domain\Delivery\RelayDeliveryTransportPolicy;
 use Latra\Domain\Ingestion\DeviceStatusPolicy;
 use Latra\Infrastructure\Persistence\PdoIngestionSettingsRepository;
 use Latra\Infrastructure\Persistence\PdoRelayEnrollmentRepository;
@@ -21,18 +24,16 @@ final class RelayRuntime {
         return new PdoRelayRuntimeRepository(Database::getInstance());
     }
 
-    public static function settings(int $vehicleId): array {
-        $row = self::settingsOrNull($vehicleId);
-        if ($row === null) throw new \Latra\Domain\Exception\NotEnrolled('Vehicle is not enrolled for relay collection');
-        return $row;
+    public static function settings(int $vehicleId): RelaySettings {
+        $settings = self::settingsOrNull($vehicleId);
+        if ($settings === null) throw new \Latra\Domain\Exception\NotEnrolled('Vehicle is not enrolled for relay collection');
+        return $settings;
     }
 
     /** Enrolled settings, or null so iteration can skip instead of aborting the whole run. */
-    public static function settingsOrNull(int $vehicleId): ?array {
-        $row = self::repository()->relaySettings($vehicleId);
-        if ($row === null) return null;
-        RelayIdentityPolicy::assertBudgets($row);
-        return $row;
+    public static function settingsOrNull(int $vehicleId): ?RelaySettings {
+        // Budget validation happens in RelaySettings, so an invalid row cannot be read here.
+        return self::repository()->relaySettings($vehicleId);
     }
 
     /** Activity ids enabled for a vehicle's automation buckets (CLI/manual collection scope). */
@@ -40,10 +41,10 @@ final class RelayRuntime {
         return self::repository()->allowedBucketActivities($vehicleId);
     }
 
-    private static function queue(array $settings): DurableRelay {
+    private static function queue(RelaySettings $settings): DurableRelay {
         return new DurableRelay(Database::getInstance(), Schema::configInt('outbox_max_tries', 8),
             static fn(int $attempt): int => RelayRuntimePolicy::backoff($attempt),
-            (int) $settings['max_pending_records'], (int) $settings['max_pending_bytes']);
+            $settings->maxPendingRecords, $settings->maxPendingBytes);
     }
 
     /** Enrollment changes only relay settings, never activity mappings or schedules. */
@@ -56,7 +57,7 @@ final class RelayRuntime {
     public static function status(array $vehicle): array {
         $settings = self::settings((int) $vehicle['id']);
         $status = self::repository()->relayStatus('wialon:' . $vehicle['wialon_unit_id']);
-        return ['profile' => $settings['profile'], 'streams' => $status['streams'], 'queue' => $status['queue']];
+        return ['profile' => $settings->profile, 'streams' => $status['streams'], 'queue' => $status['queue']];
     }
 
     /** Operator-triggered recovery uses current identity and mapping policy without fetching source data. */
@@ -83,13 +84,13 @@ final class RelayRuntime {
         return new PdoIngestionSettingsRepository(Database::getInstance());
     }
 
-    private static function mapper(array $vehicle, array $settings, array $allowed, bool $events): RelayPayloadMapper {
+    private static function mapper(array $vehicle, RelaySettings $settings, array $allowed, bool $events): RelayPayloadMapper {
         $ingestion = self::ingestionSettings();
         return new RelayPayloadMapper($vehicle, $ingestion->enabledActivities((int) $vehicle['id']), $allowed,
             !empty($vehicle['speed_limit_kmh']) ? (float) $vehicle['speed_limit_kmh']
                 : $ingestion->speedLimit((int) $vehicle['id']),
             Schema::configInt('overspeed_consecutive', RelayRuntimePolicy::OVERSPEED_CONSECUTIVE),
-            Schema::configInt('battery_low_mv', DeviceStatusPolicy::BATTERY_LOW_MV), $settings['profile'],
+            Schema::configInt('battery_low_mv', DeviceStatusPolicy::BATTERY_LOW_MV), $settings->profile,
             $events ? max(0, Schema::configInt('event_engine_cooldown_seconds', RelayRuntimePolicy::EVENT_COOLDOWN_SECONDS)) : 0,
             ParamResolver::enabledAliases());
     }
@@ -117,7 +118,7 @@ final class RelayRuntime {
             static fn(): int => time(),
         ))->collect(
             'wialon:' . $vehicle['wialon_unit_id'], $stream, $window, $limit,
-            (int) $settings['max_records'], (int) $settings['max_bytes'], $explicitFrom, $explicitTo,
+            $settings->maxRecords, $settings->maxBytes, $explicitFrom, $explicitTo,
         );
     }
 
@@ -150,27 +151,22 @@ final class RelayRuntime {
     }
 
     /**
-     * Mock delivery stays the default. The real endpoint requires the explicit
-     * relay_delivery_transport=latra setting plus configured credentials, so a
-     * deployment can never reach LATRA by accident.
+     * Composes the destination selected by RelayDeliveryTransportPolicy; the
+     * safety rule (mock default, explicit latra mode, fail closed) lives in Domain.
      */
     private static function deliveryTransport(): ?\Closure {
-        $mode = Schema::config('relay_delivery_transport', 'mock');
-        if ($mode === 'mock') {
-            $url = Schema::config('relay_mock_url', '');
-            if ($url === '') return null;
-            $transport = new \Latra\Infrastructure\Delivery\LoopbackRelayTransport($url);
+        $selection = RelayDeliveryTransportPolicy::select(
+            (string) Schema::config('relay_delivery_transport', RelayDeliveryTransportPolicy::MODE_MOCK),
+            static fn(): string => (string) Schema::config('relay_mock_url', ''),
+            static fn(): string => Vault::latraUrl(),
+        );
+        if ($selection->target === RelayDeliveryTarget::Disabled) return null;
+        if ($selection->target === RelayDeliveryTarget::Mock) {
+            $transport = new \Latra\Infrastructure\Delivery\LoopbackRelayTransport($selection->endpoint);
             return static fn(string $body, string $key): array => $transport($body, $key);
         }
-        if ($mode !== 'latra') {
-            throw new RuntimeException('Unsupported relay delivery transport: ' . $mode);
-        }
-        $url = Vault::latraUrl();
-        if ($url === '') {
-            throw new RuntimeException('The LATRA transport requires LATRA_API_URL to be configured');
-        }
         $transport = new \Latra\Infrastructure\Delivery\LatraRelayTransport(
-            $url,
+            $selection->endpoint,
             Vault::latraUser(),
             Vault::latraPass(),
         );
@@ -252,7 +248,7 @@ final class RelayRuntime {
     public static function queuePayload(array $vehicle, array $payload): array {
         $settings = self::settings((int) $vehicle['id']);
         return (new \Latra\Application\Collection\QueueManualRelayPayload(
-            self::queue($settings), (int)$settings['max_bytes'],
+            self::queue($settings), $settings->maxBytes,
         ))->queue($vehicle, $payload);
     }
 }

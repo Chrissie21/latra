@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace Latra\Infrastructure\EntryPoint;
 
-use Latra\Domain\Exception\{InvalidSubmission,OwnershipLost,CapacityExceeded,SourceUnavailable,NotEnrolled,RequiresReview};
+use Latra\Domain\Exception\{InvalidSubmission,OwnershipLost,CapacityExceeded,SourceUnavailable,NotEnrolled,RequiresReview,InvalidConfiguration};
 use Throwable;
 
 final class WorkflowFailurePresenter
@@ -17,6 +17,7 @@ final class WorkflowFailurePresenter
             $error instanceof SourceUnavailable => [503,'source_unavailable',true],
             $error instanceof NotEnrolled => [409,'not_enrolled',false],
             $error instanceof RequiresReview => [409,'requires_review',false],
+            $error instanceof InvalidConfiguration => [500,'invalid_configuration',false],
             default => [500,'internal_error',false],
         };
         return ['status'=>$status,'body'=>['success'=>false,'error'=>$error->getMessage(),'code'=>$code,'retryable'=>$retryable]];

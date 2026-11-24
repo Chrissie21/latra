@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Latra\Infrastructure\Persistence;
 
 use Latra\Application\Collection\RelayRuntimeRepository;
+use Latra\Domain\Collection\RelaySettings;
 use PDO;
 use PDOStatement;
 
@@ -38,13 +39,13 @@ final class PdoRelayRuntimeRepository implements RelayRuntimeRepository
         return $this->enabledEventActivityIds();
     }
 
-    public function relaySettings(int $vehicleId): ?array
+    public function relaySettings(int $vehicleId): ?RelaySettings
     {
         $row = $this->run(
             'SELECT * FROM relay_vehicle_settings WHERE vehicle_id=? AND is_enabled=1',
             [$vehicleId],
         )->fetch(PDO::FETCH_ASSOC);
-        return $row === false ? null : $row;
+        return $row === false ? null : RelaySettings::fromRow($row, $vehicleId);
     }
 
     public function relayStatus(string $unit): array
