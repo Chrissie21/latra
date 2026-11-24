@@ -3,7 +3,7 @@
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../includes/autoload.php';
 use Latra\Application\Collection\RelayPayloadMapper as RelayMapper;
-foreach (['ParamResolver', 'LatraMapper', 'GpsValidator',
+foreach (['ParamResolver', 'LatraMapper',
     'WialonAPI'] as $class) require_once __DIR__ . '/../includes/' . $class . '.php';
 $db = testDatabase(); fixture($db);
 function verify(bool $ok, string $why): void { if (!$ok) throw new RuntimeException($why); }

@@ -4,7 +4,7 @@ if (PHP_SAPI !== 'cli') exit(1);
 $root = sys_get_temp_dir() . '/latra-relay-api-' . bin2hex(random_bytes(6));
 mkdir($root, 0700); mkdir($root . '/includes', 0700);
 copy(__DIR__ . '/../api.php', $root . '/api.php');
-foreach (['Database','WialonAPI','LatraMapper','Auth','GpsValidator','EmergencyHandler','DeviceMonitor','DataCleaner'] as $class) {
+foreach (['Database','WialonAPI','LatraMapper','Auth','EmergencyHandler','DataCleaner'] as $class) {
     file_put_contents($root . '/includes/' . $class . '.php', '<?php');
 }
 $config = <<<'PHP'

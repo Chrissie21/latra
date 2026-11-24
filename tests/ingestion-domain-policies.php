@@ -75,12 +75,12 @@ if ($normalized['lat'] !== -6.12345679 || $normalized['lng'] !== 39.12345679
     throw new RuntimeException('Normalization policy changed canonical data or zero handling');
 }
 
-$valid = GpsValidator::validate($normalized);
-if (!$valid['valid'] || GpsValidator::statusOf($valid) !== 'valid') {
+$valid = \Latra\Domain\Ingestion\GpsValidationPolicy::validate($normalized);
+if (!$valid['valid'] || \Latra\Domain\Ingestion\GpsValidationPolicy::statusOf($valid) !== 'valid') {
     throw new RuntimeException('Valid normalized message failed domain validation');
 }
-$invalid = GpsValidator::validate(array_replace($normalized, ['lat' => 91, 'bearing' => 360]));
-if ($invalid['valid'] || GpsValidator::statusOf($invalid) !== 'failed'
+$invalid = \Latra\Domain\Ingestion\GpsValidationPolicy::validate(array_replace($normalized, ['lat' => 91, 'bearing' => 360]));
+if ($invalid['valid'] || \Latra\Domain\Ingestion\GpsValidationPolicy::statusOf($invalid) !== 'failed'
     || array_column($invalid['errors'], 'field') !== ['lat', 'bearing']) {
     throw new RuntimeException('GPS validation ranges or error ordering changed');
 }

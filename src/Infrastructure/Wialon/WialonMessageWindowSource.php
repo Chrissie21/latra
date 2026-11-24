@@ -5,11 +5,10 @@ namespace Latra\Infrastructure\Wialon;
 
 use Latra\Application\Collection\CompleteMessageWindowSource;
 use RuntimeException;
-use WialonAPI;
 
 final class WialonMessageWindowSource implements CompleteMessageWindowSource
 {
-    public function __construct(private WialonAPI $client)
+    public function __construct(private WialonApiClient $client)
     {
     }
 

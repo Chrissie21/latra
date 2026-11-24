@@ -3,7 +3,6 @@ if (PHP_SAPI !== 'cli') {
     exit(1);
 }
 require_once __DIR__ . '/../includes/autoload.php';
-require_once __DIR__ . '/../includes/DeviceMonitor.php';
 
 use Latra\Application\DeviceStatus\DeviceStatusEffects;
 use Latra\Application\DeviceStatus\DeviceStatusClock;
@@ -247,12 +246,6 @@ try {
 } finally {
     $databaseInstance->setValue(null, $previousDatabase);
     $sensitiveConfigScrubbed->setValue(null, $previousScrubState);
-}
-
-if (DeviceMonitor::BATTERY_LOW_MV !== DeviceStatusPolicy::BATTERY_LOW_MV
-    || DeviceMonitor::BATTERY_LOW_PCT !== DeviceStatusPolicy::BATTERY_LOW_PCT
-    || DeviceMonitor::EXT_POWER_LOW_MV !== DeviceStatusPolicy::EXT_POWER_LOW_MV) {
-    throw new RuntimeException('Existing public device status thresholds changed');
 }
 
 $cleared = DeviceStatusPolicy::evaluate([

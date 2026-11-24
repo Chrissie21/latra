@@ -101,7 +101,13 @@ class Scheduler {
 
     private static function jobOffline(): int {
         return (new \Latra\Application\Maintenance\RunOfflineSweep(
-            static fn(): array => GpsMonitor::refresh(), static fn(): int => DeviceMonitor::markOffline(),
+            static fn(): array => (new \Latra\Application\DeviceStatus\RefreshGpsHealth(
+                new \Latra\Infrastructure\Persistence\PdoHealthRepository(Database::getInstance()),
+                new \Latra\Infrastructure\Ingestion\SystemDeviceStatusClock(), static fn(): int => time()))->run(),
+            static fn(): int => (new \Latra\Application\DeviceStatus\MarkOfflineDevices(
+                new \Latra\Infrastructure\Persistence\PdoHealthRepository(Database::getInstance()),
+                new \Latra\Infrastructure\Ingestion\AuditDeviceStatusEffects(),
+                new \Latra\Infrastructure\Ingestion\SystemDeviceStatusClock(), static fn(): int => time()))->run(),
             static fn(string $type, array $payload) => Webhooks::emit($type, $payload),
         ))->run();
     }

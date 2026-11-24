@@ -63,7 +63,7 @@ class Database {
             'fuel_level_sensor'=>'fuel','vehicle_reg_no'=>'SYNTHETIC','imei'=>'123456789012345'];
     }
 }
-class WialonAPI {
+class WialonAPI extends \Latra\Infrastructure\Wialon\WialonApiClient {
     public static bool $missingPosition = false;
     public static bool $failLogin = false;
     public static int $logouts = 0;

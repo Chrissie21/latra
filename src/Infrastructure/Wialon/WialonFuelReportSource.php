@@ -5,12 +5,11 @@ namespace Latra\Infrastructure\Wialon;
 
 use Closure;
 use Latra\Application\Ingestion\FuelReportSource;
-use WialonAPI;
 
 final class WialonFuelReportSource implements FuelReportSource
 {
     private Closure $createClient;
-    private ?WialonAPI $client = null;
+    private ?WialonApiClient $client = null;
     public function __construct(callable $createClient) { $this->createClient=Closure::fromCallable($createClient); }
     public function open(): bool
     {

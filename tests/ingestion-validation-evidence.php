@@ -3,7 +3,6 @@ if (PHP_SAPI !== 'cli') {
     exit(1);
 }
 require_once __DIR__ . '/../includes/autoload.php';
-require_once __DIR__ . '/../includes/GpsValidator.php';
 
 use Latra\Infrastructure\Persistence\PdoValidationEvidenceRepository;
 
@@ -110,16 +109,17 @@ try {
         throw new RuntimeException('Validation evidence escaped its caller transaction');
     }
 
-    // The public compatibility entry point keeps its count contract over the same repository.
+    // The repository keeps its count contract over the active singleton connection.
     $database->exec('DELETE FROM validation_errors');
-    if (GpsValidator::recordErrors($message, $errors) !== 3) {
-        throw new RuntimeException('GpsValidator::recordErrors did not report its written count');
+    $singletonRepository = new PdoValidationEvidenceRepository(Database::getInstance());
+    if ($singletonRepository->recordErrors($message, $errors) !== 3) {
+        throw new RuntimeException('recordErrors did not report its written count');
     }
     if ((int) $database->query('SELECT COUNT(*) FROM validation_errors')->fetchColumn() !== 3) {
-        throw new RuntimeException('GpsValidator::recordErrors did not persist the evidence rows');
+        throw new RuntimeException('recordErrors did not persist the evidence rows');
     }
-    if (GpsValidator::recordErrors($message, []) !== 0) {
-        throw new RuntimeException('GpsValidator::recordErrors wrote evidence for an empty error list');
+    if ($singletonRepository->recordErrors($message, []) !== 0) {
+        throw new RuntimeException('recordErrors wrote evidence for an empty error list');
     }
 } finally {
     if ($database->inTransaction()) {

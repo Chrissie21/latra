@@ -5,7 +5,6 @@ namespace Latra\Infrastructure\Wialon;
 
 use Closure;
 use Latra\Application\Collection\FleetUnitSource;
-use WialonAPI;
 
 /**
  * Wialon-backed fleet unit source. One client instance and session per
@@ -14,7 +13,7 @@ use WialonAPI;
 final class WialonFleetUnitSource implements FleetUnitSource
 {
     private Closure $createClient;
-    private ?WialonAPI $client = null;
+    private ?WialonApiClient $client = null;
 
     public function __construct(callable $createClient)
     {
