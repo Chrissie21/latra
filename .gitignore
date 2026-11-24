@@ -42,6 +42,9 @@ bruno/**/environments/local.bru
 # Private Wialon evidence inspector study copy
 /wialon-evidence-inspector/
 
+# Private read-only Wialon access probe and its captured output
+/wialon-probe/
+
 # Isolated temporary-outbox architecture experiment and synthetic results
 /relay-architecture-test/
 
