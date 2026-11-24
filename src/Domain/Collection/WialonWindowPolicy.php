@@ -16,6 +16,9 @@ use RuntimeException;
  */
 final class WialonWindowPolicy
 {
+    /** Machine-readable marker for "this window must be split", shared with the stream use case. */
+    public const SUBDIVISION_CODE = 1001;
+
     public static function assertRequest(
         int $unitId,
         int $from,
@@ -36,7 +39,7 @@ final class WialonWindowPolicy
     public static function assertTotal(mixed $total, int $maxRecords): int
     {
         if (is_int($total) && $total > $maxRecords) {
-            throw new RuntimeException('Wialon window needs subdivision', 1001);
+            throw new RuntimeException('Wialon window needs subdivision', self::SUBDIVISION_CODE);
         }
         if (!is_int($total) || $total < 0 || $total > $maxRecords) {
             throw new RuntimeException('Invalid or over-bound Wialon count');

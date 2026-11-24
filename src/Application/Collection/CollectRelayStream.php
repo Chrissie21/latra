@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Latra\Application\Collection;
 
 use Closure;
+use Latra\Domain\Collection\WialonWindowPolicy;
 use RuntimeException;
 
 final class CollectRelayStream
@@ -41,7 +42,7 @@ final class CollectRelayStream
             try {
                 return ($this->collectWindow)($from, $to, min(50, $maximum), $maximum, $maxBytes);
             } catch (RuntimeException $error) {
-                if ($error->getCode() !== 1001 || $from === $to) throw $error;
+                if ($error->getCode() !== WialonWindowPolicy::SUBDIVISION_CODE || $from === $to) throw $error;
                 $to = $from + intdiv($to - $from, 2);
             }
         }
