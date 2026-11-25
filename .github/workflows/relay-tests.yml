@@ -39,6 +39,11 @@ jobs:
           php tests/relay-delivery-service.php
           php tests/relay-delivery-port.php
           php tests/relay-flush-service.php
+          php tests/latra-idd-contract.php
+          php tests/latra-all-mapping.php
+          php tests/latra-required-review.php
+          php tests/latra-review-retention.php
+          php tests/latra-mock-api.php
           php tests/relay-mapping.php
           php tests/relay-domain-mapping.php
           php tests/relay-collection-policy.php
@@ -70,3 +75,4 @@ jobs:
           php tests/relay-runtime.php
           php tests/relay-cli.php
           php tests/ingestion-native-repositories.php
+          php tests/latra-vts-batching.php
