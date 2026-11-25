@@ -10,29 +10,29 @@ use Latra\Domain\Ingestion\LatraPayloadPolicy;
 final class QueueManualRelayPayload
 {
     public function __construct(private RelayWindowCollector $collector, private int $maxBytes) {}
-    public function queue(array $vehicle, array $payload): array
+    public function queue(array $vehicle, array $payload, ?array $sourceEvidence=null): array
     {
-        if (($payload['vehicle_reg_no'] ?? null) !== $vehicle['vehicle_reg_no']
-            || ($payload['imei'] ?? null) !== $vehicle['imei']
-            || !is_array($payload['items'] ?? null) || !$payload['items'] || !array_is_list($payload['items'])) {
-            throw new InvalidSubmission('Payload vehicle identity mismatch');
+        foreach(['vehicle_reg_no','imei'] as $identity) {
+            if(isset($payload[$identity]) && $payload[$identity]!=='' && ($payload[$identity]!==($vehicle[$identity]??null))) {
+                throw new InvalidSubmission('Payload vehicle identity mismatch');
+            }
         }
-        foreach ($payload['items'] as $item) {
-            if (!is_array($item)) throw new InvalidSubmission('Invalid manual payload');
-            $one = $payload;
-            $one['items'] = [$item];
-            if (LatraPayloadPolicy::validatePayload($one)) throw new InvalidSubmission('Invalid manual payload');
-        }
-        $timestamp = $payload['items'][0]['timestamp'] ?? null;
-        if (!is_string($timestamp) || !ctype_digit($timestamp)) throw new InvalidSubmission('Source timestamp required');
-        $time = intdiv((int)$timestamp, 1000);
-        $raw = ['t'=>$time, 'payload'=>$payload];
+        $errors=LatraPayloadPolicy::validatePayload($payload);
+        $timestamp=$payload['items'][0]['timestamp'] ?? null;
+        // Receipt time is only the review record's local ordering key, never an outgoing GPS time.
+        $time=is_string($timestamp) && ctype_digit($timestamp) && (float)$timestamp>=946684800000
+            ? intdiv((int)$timestamp,1000) : time();
+        $raw=['t'=>$time,'payload'=>$payload];
+        if($sourceEvidence!==null) $raw['source_evidence']=$sourceEvidence;
         $stream = 'manual:wialon:' . $vehicle['wialon_unit_id'] . ':'
-            . substr(hash('sha256', json_encode($payload, JSON_THROW_ON_ERROR)), 0, 24);
+            . substr(hash('sha256', json_encode($sourceEvidence===null ? $payload : [$payload,$sourceEvidence], JSON_THROW_ON_ERROR)), 0, 24);
         $result = $this->collector->collectWindow($stream, $time, $time, 1, 1, $this->maxBytes,
             static fn(): array => ['count'=>1,'messages'=>[$raw]],
-            static fn(array $message, array $state): array => ['payload'=>$message['payload'],'state'=>$state]);
-        return ['success'=>true,'queued'=>$result['queued'],
-            'message'=>'Saved to the durable relay. Real LATRA delivery is blocked.'];
+            static function(array $message,array $state) use($errors):array {
+                if($errors) throw new \Latra\Domain\Exception\RequiresReview(implode('; ',$errors));
+                return ['payload'=>$message['payload'],'state'=>$state];
+            });
+        return ['success'=>!$errors,'review'=>(bool)$errors,'errors'=>$errors,'queued'=>$result['queued'],
+            'message'=>$errors ? 'Saved for review; missing or invalid required data blocks delivery.' : 'Saved to the durable relay. Real LATRA delivery is blocked.'];
     }
 }

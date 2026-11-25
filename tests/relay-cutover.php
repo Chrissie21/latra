@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__.'/vts-fixtures.php';
 /** The active application must route its ordinary entry points through the relay, with no legacy writes. */
 if (PHP_SAPI !== 'cli') exit(1);
 define('DELIVERY_ARCHITECTURE', 'relay');
@@ -13,22 +14,19 @@ class RelayRuntime {
         $vehicle = ['id' => 1, 'vehicle_reg_no' => 'SYNTHETIC', 'imei' => '123456789012345'];
         if (($vehicleId !== null && $vehicleId !== $vehicle['id'])
             || ($payload['vehicle_reg_no'] ?? null) !== $vehicle['vehicle_reg_no']
-            || ($payload['imei'] ?? null) !== $vehicle['imei']
-            || empty($payload['items'][0]['latitude']) || empty($payload['items'][0]['longitude'])) {
+            || ($payload['imei'] ?? null) !== $vehicle['imei']) {
             throw new RuntimeException('Relay payload identity does not match the owning vehicle');
         }
         return self::queuePayload($vehicle, $payload);
     }
     public static function queuePayload(array $vehicle, array $payload): array {
         if (($payload['vehicle_reg_no'] ?? null) !== ($vehicle['vehicle_reg_no'] ?? null)
-            || ($payload['imei'] ?? null) !== ($vehicle['imei'] ?? null)
-            || empty($payload['items'][0]['latitude']) || empty($payload['items'][0]['longitude'])) {
+            || ($payload['imei'] ?? null) !== ($vehicle['imei'] ?? null)) {
             throw new RuntimeException('Relay payload identity does not match enrolled vehicle');
         }
         $errors = LatraMapper::validatePayload($payload);
-        if ($errors) throw new RuntimeException(implode('; ', $errors));
         self::$queuedPayloads[] = [$vehicle, $payload];
-        return ['success' => true, 'queued' => 1];
+        return ['success'=>!$errors,'review'=>(bool)$errors,'queued'=>1];
     }
     public static function poll(array $vehicle, int $window, int $limit): array {
         self::$calls[] = ['poll', $vehicle['id'], $window, $limit];
@@ -100,8 +98,8 @@ foreach (['LatraAdapter', 'Delivery'] as $retired) {
 }
 echo "PASS legacy direct-send transport classes are retired\n";
 $fuelReport = new ReflectionMethod(Scheduler::class, 'jobFuelReport');
-expect($fuelReport->invoke(null) === 1 && count(RelayRuntime::$queuedPayloads) === 1,
-    'Scheduled fuel report was not queued in relay mode');
+expect($fuelReport->invoke(null) === 0 && count(RelayRuntime::$queuedPayloads) === 1,
+    'Incomplete fuel report must reach the queue for review without claiming it is sendable');
 expect(RelayRuntime::$queuedPayloads[0][1]['vehicle_reg_no'] === 'SYNTHETIC'
     && RelayRuntime::$queuedPayloads[0][1]['imei'] === '123456789012345'
     && RelayRuntime::$queuedPayloads[0][1]['items'][0]['latitude'] === '-6.8'
@@ -109,8 +107,8 @@ expect(RelayRuntime::$queuedPayloads[0][1]['vehicle_reg_no'] === 'SYNTHETIC'
     'Scheduled fuel report lost vehicle identity or live position before relay queueing');
 echo "PASS scheduled fuel reports preserve vehicle identity and queue through relay\n";
 WialonAPI::$missingPosition = true;
-expect($fuelReport->invoke(null) === 0 && count(RelayRuntime::$queuedPayloads) === 1,
-    'Fuel report without a live source position was queued');
+expect($fuelReport->invoke(null) === 0 && count(RelayRuntime::$queuedPayloads) === 2,
+    'Fuel report without a live source position was not retained for review');
 WialonAPI::$missingPosition = false;
 $loginFailed = false;
 WialonAPI::$failLogin = true;
@@ -121,7 +119,7 @@ try {
 }
 WialonAPI::$failLogin = false;
 expect($loginFailed, 'Fuel-report Wialon login failure was not surfaced');
-echo "PASS missing position is skipped without fabricating data and Wialon login errors are surfaced\n";
+echo "PASS missing position is retained for review without fabricated data and Wialon login errors are surfaced\n";
 foreach (['IngestPipeline', 'Outbox'] as $legacyAdapter) {
     expect(!is_file(__DIR__ . '/../includes/' . $legacyAdapter . '.php'),
         'Legacy direct-delivery adapter reintroduced: ' . $legacyAdapter);
@@ -135,11 +133,11 @@ $emergencyMismatch = EmergencyHandler::pushPayload([
 ], 1);
 expect(!$emergencyMismatch['ok'] && str_contains($emergencyMismatch['response'], 'owning vehicle'),
     'Emergency queueing accepted a payload whose identity was not the owning vehicle');
-$emergencyOk = EmergencyHandler::pushPayload([
-    'vehicle_reg_no' => 'SYNTHETIC',
-    'imei' => '123456789012345',
-    'items' => [['activity_id' => '8', 'timestamp' => (string) (time() * 1000), 'latitude' => '-6.8', 'longitude' => '39.2']],
-], 1);
+$emergencyPayload = \Latra\Domain\Ingestion\LatraPayloadPolicy::buildPayload(
+    ['vehicle_reg_no'=>'SYNTHETIC','imei'=>'123456789012345'],
+    vtsTestMessage(['lat'=>-6.8,'lng'=>39.2,'wialon_msg_time'=>time()]), 8,
+);
+$emergencyOk = EmergencyHandler::pushPayload($emergencyPayload, 1);
 expect($emergencyOk['ok'] === true && ($emergencyOk['queued'] ?? 0) === 1,
     'Emergency queueing rejected a valid payload for the owning vehicle');
 echo "PASS emergency relay queueing enforces the vehicle owner before delivery\n";

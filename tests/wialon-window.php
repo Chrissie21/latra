@@ -87,7 +87,8 @@ $message = wialonMessage(100);
 windowAssert(WialonWindowPolicy::assertMessage($message, 100, 200) === $message, 'In-range message changed');
 windowRejects(fn() => WialonWindowPolicy::assertMessage(['t' => 99], 100, 200), 'Invalid Wialon source timestamp');
 windowRejects(fn() => WialonWindowPolicy::assertMessage(['t' => 201], 100, 200), 'Invalid Wialon source timestamp');
-windowRejects(fn() => WialonWindowPolicy::assertMessage(['t' => '100'], 100, 200), 'Invalid Wialon source timestamp');
+windowAssert(WialonWindowPolicy::assertMessage(['t'=>'100'],100,200)===['t'=>'100'], 'Invalid GPS time must reach durable review unchanged');
+windowAssert(WialonWindowPolicy::assertMessage([],100,200)===[], 'Missing GPS time must reach durable review unchanged');
 windowRejects(fn() => WialonWindowPolicy::assertMessage('not a message', 100, 200), 'Invalid Wialon source timestamp');
 
 windowAssert(WialonWindowPolicy::addBytes(0, $message, 16384) === strlen(json_encode($message)), 'Byte accounting changed');

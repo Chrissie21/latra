@@ -61,8 +61,10 @@ final class WialonWindowPolicy
 
     public static function assertMessage(mixed $message, int $from, int $to): array
     {
-        if (!is_array($message) || !is_int($message['t'] ?? null)
-            || $message['t'] < $from || $message['t'] > $to) {
+        // Missing/invalid timestamps must reach durable review unchanged. Known times
+        // outside the requested interval still invalidate the source window.
+        if (!is_array($message) || (is_int($message['t'] ?? null)
+            && ($message['t'] < $from || $message['t'] > $to))) {
             throw new RuntimeException('Invalid Wialon source timestamp');
         }
         return $message;

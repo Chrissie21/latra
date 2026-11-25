@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__.'/vts-fixtures.php';
 if (PHP_SAPI !== 'cli') {
     exit(1);
 }
@@ -66,7 +67,7 @@ $normalized = \Latra\Domain\Ingestion\WialonMessageNormalizationPolicy::normaliz
     $vehicle, $source, ParamResolver::resolve($source['p'], $vehicle['hw_type']),
 );
 if ($normalized['lat'] !== -6.12345679 || $normalized['lng'] !== 39.12345679
-    || $normalized['speed'] !== 0.0 || $normalized['d2d3'] !== 2
+    || $normalized['speed'] !== 0.0 || $normalized['d2d3'] !== null
     || $normalized['battery_pct'] !== 50.0 || $normalized['battery_mv'] !== null
     || $normalized['odometer'] !== 0.0 || $normalized['driver_id'] !== 'driver-7'
     || $normalized['canonical_params']['pwr_ext'] !== 0
@@ -112,28 +113,29 @@ $unit = \Latra\Domain\Ingestion\LatraPayloadPolicy::mapVehicle([
     'flds' => [['n' => 'plate', 'v' => ' tz-123 ']],
 ]);
 if ($unit['vehicle_reg_no'] !== 'TZ-123' || $unit['lat'] !== -6.0 || $unit['lng'] !== 39.0
-    || $unit['last_message_time'] !== 1000 || $unit['d2d3'] !== 2
+    || $unit['last_message_time'] !== 1000 || $unit['d2d3'] !== null
     || LatraMapper::mapVehicle([
         'id' => 77,
         'nm' => 'not a plate name',
         'flds' => [],
-    ])['vehicle_reg_no'] !== 'W77') {
+    ])["vehicle_reg_no"] !== '') {
     throw new RuntimeException('Vehicle payload normalization or registration fallback changed');
 }
 
+$fuelInfo = LatraMapper::buildFuelInfo(vtsTestParams(['fuel_level'=>125,'rt_fuel'=>125,'fuel_signal'=>60]));
 $payload = LatraMapper::buildPayload(
     $vehicle,
-    ['wialon_msg_time' => $sourceTime, 'lat' => -6.1, 'lng' => 39.1, 'speed' => 0, 'mgs_id' => 0],
+    vtsTestMessage(['wialon_msg_time'=>$sourceTime,'lat'=>-6.1,'lng'=>39.1,'speed'=>0,'mgs_id'=>0]),
     16,
-    ['fuel_sensor' => 'present'],
-    ['fuelLevel' => '125'],
+    [],
+    $fuelInfo,
 );
 if ($payload['items'][0]['latitude'] !== '-6.1' || $payload['items'][0]['horizontal_speed'] !== '0'
-    || $payload['items'][0]['MGS_ID'] !== '0' || $payload['items'][0]['addon_info'] !== ['fuel_sensor' => 'present']
-    || $payload['items'][0]['fuel_info'] !== ['fuelLevel' => '125']
+    || $payload['items'][0]['MGS_ID'] !== '0' || $payload['items'][0]['addon_info'] !== ''
+    || $payload['items'][0]['fuel_info'] !== $fuelInfo
     || LatraMapper::validatePayload($payload) !== []
-    || LatraMapper::buildFuelInfo(['fuel_level' => 12.5])['fuelLevel'] !== '125') {
-    throw new RuntimeException('LATRA payload policy changed formatting, activity blocks, or fuel scaling');
+    || LatraMapper::buildFuelInfo(['fuel_level'=>125])['fuelLevel'] !== null) {
+    throw new RuntimeException('LATRA payload policy changed formatting, activity blocks, or fuel units');
 }
 $missingFuel = $payload;
 unset($missingFuel['items'][0]['fuel_info']);
@@ -151,15 +153,15 @@ $orderedErrors = LatraMapper::validatePayload([
         'altitude' => 'unknown',
     ]],
 ]);
-if ($orderedErrors !== [
+if (array_slice($orderedErrors, 0, 6) !== [
     'vehicle_reg_no is required',
     'imei is required',
     'items[0].latitude is required',
     'items[0].longitude is required',
     'items[0].timestamp is required',
     'items[0].altitude must be numeric',
-    'items[0].fuel_info is required for activity 16',
-]) {
+] || !in_array('items[0].HDOP is required', $orderedErrors, true)
+    || end($orderedErrors) !== 'items[0].fuel_info is required for activity 16') {
     throw new RuntimeException('LATRA payload validation error order changed');
 }
 

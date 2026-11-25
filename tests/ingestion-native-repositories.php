@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__.'/vts-fixtures.php';
 /** Only a fresh, explicitly resettable synthetic relay database is accepted. */
 if (PHP_SAPI !== 'cli') exit(1);
 $dsn=getenv('LATRA_RELAY_TEST_DSN') ?: '';
@@ -79,8 +80,8 @@ echo "PASS killed native advisory-lock connection stops dispatch and a fresh own
 (new ReflectionProperty(Database::class,'instance'))->setValue(null,$observer);
 $vehicle=$observer->query('SELECT * FROM vehicles WHERE id=7')->fetch();
 RelayRuntime::enroll($vehicle,'generic',['max_records'=>20,'max_bytes'=>65536,'max_pending_records'=>20,'max_pending_bytes'=>65536]);
-$payload=['vehicle_reg_no'=>$vehicle['vehicle_reg_no'],'imei'=>$vehicle['imei'],
-    'items'=>[['activity_id'=>'1','timestamp'=>'100000','latitude'=>'-6.8','longitude'=>'39.2']]];
+$payload=\Latra\Domain\Ingestion\LatraPayloadPolicy::buildPayload($vehicle,
+    vtsTestMessage(['wialon_msg_time'=>time()-1,'lat'=>-6.8,'lng'=>39.2]),1);
 $first=RelayRuntime::queueForVehicle($payload,7);
 $again=RelayRuntime::queueForVehicle($payload,7);
 nativeRepositoryExpect($first['queued']===1 && $again['queued']===0

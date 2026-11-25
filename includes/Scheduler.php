@@ -90,8 +90,8 @@ class Scheduler {
         return (new \Latra\Application\Ingestion\SubmitFuelReports(
             new \Latra\Infrastructure\Persistence\PdoFuelReportRepository(Database::getInstance()),
             new \Latra\Infrastructure\Wialon\WialonFuelReportSource(static fn(): WialonAPI => FleetSync::connector()),
-            static fn(array $vehicle, array $payload): array =>
-                RelayRuntime::queueForVehicle($payload, (int) $vehicle['id']),
+            static fn(array $vehicle, array $payload, ?array $evidence=null): array =>
+                RelayRuntime::queuePayload($vehicle, $payload, $evidence),
             static function(string $event, array $context, bool $warning): void {
                 if ($warning) Logger::warn($event,$context); else Logger::info($event,$context);
             },

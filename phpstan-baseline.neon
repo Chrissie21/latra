@@ -59,9 +59,3 @@ parameters:
 			identifier: nullCoalesce.offset
 			count: 1
 			path: src/Domain/Ingestion/ActivityDetectionPolicy.php
-
-		-
-			message: '#^Method Latra\\Domain\\Ingestion\\LatraPayloadPolicy\:\:detect2D3D\(\) never returns null so it can be removed from the return type\.$#'
-			identifier: return.unusedType
-			count: 1
-			path: src/Domain/Ingestion/LatraPayloadPolicy.php

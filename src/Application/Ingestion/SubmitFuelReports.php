@@ -48,9 +48,10 @@ final class SubmitFuelReports
                     ($this->log)('fuel.skipped', $context, false);
                     continue;
                 }
-                $payload = LatraPayloadPolicy::buildPayload($vehicle, $reading['source'], 16, [], $reading['fuel']);
+                $fuel = LatraPayloadPolicy::buildFuelInfo($reading['fuel']);
+                $payload = LatraPayloadPolicy::buildPayload($vehicle, $reading['source'], 16, [], $fuel);
                 try {
-                    $result = ($this->submit)($vehicle, $payload);
+                    $result = ($this->submit)($vehicle, $payload, $reading['raw_source'] ?? null);
                 } catch (Throwable $error) {
                     if (!$this->relay) {
                         throw $error;

@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__.'/vts-fixtures.php';
 /** Stage 3: real application coordinator against a dedicated SQL fixture and paged source. */
 if (PHP_SAPI !== 'cli') exit(1);
 define('DELIVERY_ARCHITECTURE', 'relay');
@@ -74,7 +75,7 @@ $vehicle = Database::fetch('SELECT * FROM vehicles WHERE id=1');
 $now = time() - 120;
 $report = static fn(int $t, array $params = []): array => ['t' => $t,
     'pos' => ['x' => 39.2, 'y' => -6.8, 'z' => 10, 's' => 20, 'c' => 90, 'sc' => 8],
-    'p' => $params + ['io_66' => 12500, 'io_67' => 4100]];
+    'p' => vtsTestParams($params + ['io_66'=>12500,'io_67'=>4100])];
 $source = new RuntimeSource([$report($now), $report($now + 1), $report($now + 2)], $db);
 $r = RelayRuntime::collect($vehicle, 180, 100, ':poll', [1], $source, $now, $now + 2);
 expect($r['fetched'] === 3 && $r['inserted'] === 3 && $r['rejected'] === 0 && $r['skipped'] === 0, 'Per-window collection counts are wrong');

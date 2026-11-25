@@ -18,25 +18,18 @@ final class FuelReportPolicy
                 break;
             }
         }
-        if ($value === null || $value === '') {
-            return ['reason' => 'no_live_fuel_value'];
-        }
-        $position = $data['pos'] ?? null;
-        if (!is_array($position) || !isset($position['t'], $position['x'], $position['y'])
-            || !is_numeric($position['t']) || !is_numeric($position['x']) || !is_numeric($position['y'])
-            || (int) $position['t'] <= 0) {
-            return ['reason' => 'no_live_position'];
-        }
+        $position=is_array($data['pos'] ?? null) ? $data['pos'] : [];
         return [
             'source' => [
-                'wialon_msg_time' => (int) $position['t'],
-                'lat' => $position['y'],
-                'lng' => $position['x'],
+                'wialon_msg_time' => is_numeric($position['t'] ?? null) && (int)$position['t']>0 ? (int)$position['t'] : null,
+                'lat' => $position['y'] ?? null,
+                'lng' => $position['x'] ?? null,
                 'altitude' => $position['z'] ?? null,
                 'speed' => $position['s'] ?? null,
                 'bearing' => $position['c'] ?? null,
                 'satellite_count' => $position['sc'] ?? null,
             ],
+            'raw_source' => $data,
             'fuel' => ['fuel_level' => $value, 'fuel_sensor_param' => $vehicle['fuel_level_sensor'], 'unit' => $unit],
         ];
     }

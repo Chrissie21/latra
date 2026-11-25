@@ -61,7 +61,7 @@ final class PdoRelayReviewRecoveryRepository implements RelayReviewRecoveryRepos
             $pendingBytes = array_sum(array_map('strlen', $stored));
             $recovered = $held = $skipped = 0;
             foreach ($rows as $row) {
-                if ((int) $row['attempts'] !== 0 || $row['last_error'] !== 'Mapping or late source requires review'
+                if ((int) $row['attempts'] !== 0 || !str_starts_with((string)$row['last_error'], 'Mapping or late source requires review')
                     || ($attempted !== false && $attempted !== null && (int) $row['source_time'] < (int) $attempted)) {
                     $skipped++;
                     continue;

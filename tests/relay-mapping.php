@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__.'/vts-fixtures.php';
 /** Source and mapping contracts. Synthetic data only; no runtime credentials or HTTP. */
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../includes/autoload.php';
@@ -16,7 +17,7 @@ $vehicle = ['id' => 1, 'wialon_unit_id' => 123, 'imei' => '123456789012345',
 $now = time() - 60;
 function source(array $params = [], int $offset = 0): array {
     global $now;
-    return ['t' => $now + $offset, 'pos' => ['x' => 39.2, 'y' => -6.8, 's' => 20, 'z' => 10, 'c' => 90, 'sc' => 8], 'p' => $params];
+    return ['t' => $now + $offset, 'pos' => ['x' => 39.2, 'y' => -6.8, 's' => 20, 'z' => 10, 'c' => 90, 'sc' => 8], 'p' => vtsTestParams($params)];
 }
 function ids(array $mapped): array { return array_map('intval', array_column($mapped['payload']['items'], 'activity_id')); }
 function mapper(array $enabled = [], string $profile = 'teltonika-fmb', int $batteryLow = 3200): RelayMapper {
@@ -31,15 +32,18 @@ foreach ([1 => 7, 2 => 5, 3 => 6] as $code => $id) {
 $many = $map->map(source(['io_253' => 2, 'io_252' => 1, 'io_251' => 1, 'io_67' => 3000, 'io_66' => 0]), []);
 verify(ids($many) === [1, 5, 9, 10, 11], 'Simultaneous activities lost');
 foreach ($many['payload']['items'] as $item) {
-    verify($item['addon_info']['ext_power_voltage'] === '0' && $item['addon_info']['int_battery_voltage'] === '3', 'Voltage units/zero lost');
+    // Voltages belong to the power activities only; every other item must send "".
+    $expected = in_array($item['activity_id'], ['9', '10'], true)
+        ? ['ext_power_voltage' => '0', 'int_battery_voltage' => '3'] : '';
+    verify($item['addon_info'] === $expected, 'Voltage units/zero lost or leaked onto a non-power activity');
 }
 verify(ids($map->map(source(['io_67' => 0, 'io_66' => 0, 'io_252' => 0, 'io_251' => 0]), [])) === [1], 'Zero voltage or ended flags fabricated an event');
 verify(ids($map->map(source(['io_243' => 9999]), [])) === [1], 'Green driving duration became idle');
 verify(ids(mapper([], 'generic')->map(source(['io_253' => 2, 'io_252' => 1, 'io_251' => 1]), [])) === [1], 'Unknown profile used device-specific IO');
-verify(!isset($map->map(source(), [])['payload']['items'][0]['addon_info']), 'Unknown voltage fabricated');
+verify($map->map(source(), [])['payload']['items'][0]['addon_info'] === '', 'Unknown voltage fabricated');
 verify(!in_array(9, ids(mapper([], 'teltonika-fmb', 2900)->map(source(['io_67' => 3000]), [])), true), 'Custom battery policy ignored');
 $fuelPayload = LatraMapper::buildPayload($vehicle,
-    ['wialon_msg_time'=>$now,'lat'=>-6.8,'lng'=>39.2], 16, [], ['fuel_level'=>'50']);
+    vtsTestMessage(['wialon_msg_time'=>$now,'lat'=>-6.8,'lng'=>39.2]), 16, [], LatraMapper::buildFuelInfo(vtsTestParams(['fuel_level'=>2100])));
 verify(!LatraMapper::activityRequiresAddon(16)
     && LatraMapper::validatePayload($fuelPayload) === [],
     'Fuel report incorrectly requires generic addon_info instead of its separate fuel_info');
@@ -69,7 +73,8 @@ $over = source(['pwr_ext' => 12.5]); $over['pos']['s'] = 90;
 $one = $map->map($over, []); $two = $map->map($over, $one['state']);
 verify(!in_array(4, ids($one), true) && in_array(4, ids($two), true), 'Overspeed consecutive policy changed');
 $withoutAddon = source(); $withoutAddon['pos']['s'] = 90;
-rejects(static fn() => $map->map($withoutAddon, $one['state']));
+// The IDD defines no addon_info for Speeding, so it must not be rejected for lacking one.
+verify(in_array(4, ids($map->map($withoutAddon, $one['state'])), true), 'Speeding without addon data was rejected');
 // Existing explicit driver/passenger identities must not collapse to the driver's generic keyword.
 verify(in_array(13, ids($map->map(source(['event' => 'passenger_panic']), [])), true), 'Passenger panic misclassified');
 rejects(static fn() => $map->map(source(['io_66' => 'broken']), []));

@@ -10,6 +10,7 @@ namespace Latra\Application\Collection;
 use InvalidArgumentException;
 use Latra\Domain\Collection\RelayEnrollmentPolicy;
 use Latra\Domain\Ingestion\ActivityDetectionPolicy;
+use Latra\Domain\Ingestion\RelayActivitySignals;
 use Latra\Domain\Ingestion\GpsValidationPolicy as GpsValidator;
 use Latra\Domain\Ingestion\LatraPayloadPolicy;
 use Latra\Domain\Ingestion\ParameterResolutionPolicy;
@@ -50,17 +51,30 @@ final class RelayPayloadMapper {
         );
         $message = WialonMessageNormalizationPolicy::normalize($this->vehicle, $raw, $params);
         $params = $message['canonical_params'];
+        // Missing required source data must be retained even if activity gates suppress output.
+        $validation=GpsValidator::validate($message);
+        $errors=LatraPayloadPolicy::validatePayload(LatraPayloadPolicy::buildPayload($this->vehicle,$message,1));
+        if (!$validation['valid'] || $errors) {
+            $reasons=array_merge(array_map(static fn(array $error): string => $error['field'].': '.$error['reason'],$validation['errors']),$errors);
+            throw new \Latra\Domain\Exception\RequiresReview(implode('; ',array_unique($reasons)));
+        }
         $fmb = $this->profile === 'teltonika-fmb';
         $external = self::voltage($params, 'io_66', 'pwr_ext', $fmb);
         $internal = self::voltage($params, 'io_67', 'pwr_int', $fmb);
         $voltage = [];
         if ($external !== null) $voltage['ext_power_voltage'] = (string) $external;
         if ($internal !== null) $voltage['int_battery_voltage'] = (string) $internal;
-        $activities = [ActivityDetectionPolicy::MOVEMENT => true];
+        $activities = RelayActivitySignals::detect($params);
+        $activities[ActivityDetectionPolicy::MOVEMENT] = true;
         // Retain the existing detector's supported activity, alongside independent signal matches.
         // Zero voltage alone is not authoritative unplug evidence in this new path.
         $detectParams = $params;
         unset($detectParams['io_66'], $detectParams['pwr_ext'], $detectParams['ext_voltage'], $detectParams['io_66_power']);
+        foreach (['invalid_scan', 'panic', 'sos', 'alarm', 'passenger_panic'] as $flag) {
+            if (!in_array($detectParams[$flag] ?? null, [1, '1', true], true)) unset($detectParams[$flag]);
+        }
+        if (!isset(ActivityDetectionPolicy::EVENT_MAP[strtolower(trim((string) ($detectParams['event'] ?? '')))])) unset($detectParams['event']);
+        foreach (['io_104','io_105','io_233','io_8','io_335','io_123','io_79','io_80','ho','pass','tco_driver1_id'] as $unknownSignal) unset($detectParams[$unknownSignal]);
         $detected = ActivityDetectionPolicy::detect($detectParams, $state, [
             'speed' => $message['speed'], 'activity_enabled' => $this->enabled,
             'speed_limit' => $this->speedLimit, 'engine_param' => $this->vehicle['engine_param'] ?? null,
@@ -71,10 +85,16 @@ final class RelayPayloadMapper {
         if (isset(ActivityDetectionPolicy::EVENT_MAP[$eventName])) $activity = ActivityDetectionPolicy::EVENT_MAP[$eventName];
         $over = $message['speed'] !== null && $message['speed'] > $this->speedLimit;
         $state['overspending_active'] = $over ? (int) ($state['overspending_active'] ?? 0) + 1 : 0;
+        if ($state['overspending_active'] < $this->overspeedSamples) unset($activities[ActivityDetectionPolicy::SPEEDING]);
+        if ($over && $state['overspending_active'] >= $this->overspeedSamples) {
+            $activities[ActivityDetectionPolicy::SPEEDING] = true;
+        }
         if ($activity !== ActivityDetectionPolicy::SPEEDING || $state['overspending_active'] >= $this->overspeedSamples) {
             $activities[$activity] = true;
         }
         $engine = ActivityDetectionPolicy::engineState($params, $this->vehicle['engine_param'] ?? null);
+        $explicitEngine = ActivityDetectionPolicy::EVENT_MAP[$eventName] ?? null;
+        if ($engine === null && in_array($explicitEngine, [2,3], true)) $engine = $explicitEngine === 2;
         $priorEngine = $state['engine_status'] ?? null;
         if ($engine !== null) {
             if ($priorEngine === 'off' && $engine) $activities[ActivityDetectionPolicy::ENGINE_ON] = true;
@@ -96,7 +116,7 @@ final class RelayPayloadMapper {
 
         // A compact trip accumulator replaces the successful-telemetry history dependency.
         $trip = $state['trip'] ?? null;
-        if ($engine === true && $priorEngine === 'off') {
+        if ($engine === true && ($priorEngine === 'off' || ($trip === null && $explicitEngine === 2))) {
             $trip = ['from' => $raw['t'], 'distance' => 0, 'sum' => 0, 'count' => 0, 'max' => 0];
         }
         if ($trip !== null) {
@@ -123,25 +143,26 @@ final class RelayPayloadMapper {
             $custom = [];
             if ($id === ActivityDetectionPolicy::ENGINE_OFF) {
                 // An initial engine-on baseline does not establish a trip start.
-                if ($trip === null) throw new RuntimeException('Engine-off trip baseline unavailable');
-                $custom = ['distance' => round($trip['distance'], 2),
+                if ($trip !== null) $custom = ['distance' => round($trip['distance'], 2),
                     'duration' => round(($raw['t'] - $trip['from']) / 60, 2),
                     'avgSpeed' => $trip['count'] ? round($trip['sum'] / $trip['count'], 2) : null,
                     'maxSpeed' => $trip['max']];
             }
             $addon = LatraPayloadPolicy::buildAddonInfo($id, $params, $custom) ?? [];
-            // All available voltage observations travel with the report, including ordinary movement.
-            unset($addon['ext_power_voltage'], $addon['int_battery_voltage']);
-            $addon = array_merge($addon, $voltage);
+            if (in_array($id, [ActivityDetectionPolicy::BATTERY_LOW, ActivityDetectionPolicy::POWER_DISC], true)) {
+                // Power addon_info is optional; include only measured rails in volts.
+                $addon = [
+                    'ext_power_voltage' => $voltage['ext_power_voltage'] ?? null,
+                    'int_battery_voltage' => $voltage['int_battery_voltage'] ?? null,
+                ];
+                $addon = array_filter($addon, static fn($value): bool => $value !== null);
+            }
             $fuel = $id === ActivityDetectionPolicy::FUEL_REPORT ? LatraPayloadPolicy::buildFuelInfo($params) : [];
             // Do not borrow the vehicle's latest GPS fix for a historical source report.
             $vehicle = array_intersect_key($this->vehicle, array_flip(['id', 'imei', 'vehicle_reg_no']));
             $one = LatraPayloadPolicy::buildPayload($vehicle, $message, $id, $addon, $fuel);
-            if ($addon) $one['items'][0]['addon_info'] = $addon;
-            $validation = GpsValidator::validate($message + ['activity_id' => $id]);
-            if (!$validation['valid'] || LatraPayloadPolicy::validatePayload($one)) {
-                throw new RuntimeException('Source or payload validation requires review');
-            }
+            $errors=LatraPayloadPolicy::validatePayload($one);
+            if ($errors) throw new \Latra\Domain\Exception\RequiresReview(implode('; ',array_unique($errors)));
             if ($payload === null) $payload = $one;
             else $payload['items'][] = $one['items'][0];
         }

@@ -151,8 +151,8 @@ final class PersistRelayWindow implements RelayWindowCollector
                 throw new RuntimeException('Incomplete, changed or over-bound source window');
             }
             foreach ($page['messages'] as $message) {
-                if (!is_array($message) || !is_int($message['t'] ?? null)
-                    || $message['t'] < $from || $message['t'] > $to) {
+                if (!is_array($message) || (is_int($message['t'] ?? null)
+                    && ($message['t'] < $from || $message['t'] > $to))) {
                     throw new RuntimeException('Invalid source time');
                 }
                 $raw = json_encode(RelayCollectionPolicy::canonical($message), JSON_THROW_ON_ERROR);
@@ -160,7 +160,7 @@ final class PersistRelayWindow implements RelayWindowCollector
                 if ($bytes > $maxBytes) {
                     throw new RuntimeException('Source byte bound exceeded');
                 }
-                $messages[] = ['time' => $message['t'], 'raw' => $raw, 'message' => $message];
+                $messages[] = ['time' => is_int($message['t'] ?? null) ? $message['t'] : $from, 'raw' => $raw, 'message' => $message];
             }
         }
         return $messages;
@@ -180,6 +180,7 @@ final class PersistRelayWindow implements RelayWindowCollector
         $nextState = $mappingState;
         $newActivities = [];
         try {
+            if (!is_int($entry['message']['t'] ?? null)) throw new \Latra\Domain\Exception\RequiresReview('timestamp is required as an integer GPS source time');
             RelayCollectionPolicy::assertNotLate($state, $entry['time']);
             $mapped = $map($entry['message'], $mappingState);
             $payload = $mapped['payload'] ?? null;
@@ -200,9 +201,10 @@ final class PersistRelayWindow implements RelayWindowCollector
                 return [$status, $error, '', $nextState, [], true];
             }
             $body = json_encode($payload, JSON_THROW_ON_ERROR);
-        } catch (Throwable) {
+        } catch (Throwable $failure) {
             $status = 'review';
             $error = 'Mapping or late source requires review';
+            if ($failure instanceof \Latra\Domain\Exception\RequiresReview) $error .= '; ' . substr($failure->getMessage(),0,440);
             $body = $entry['raw'];
             $nextState = $mappingState;
         }

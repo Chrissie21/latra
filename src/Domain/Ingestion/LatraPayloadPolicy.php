@@ -84,134 +84,132 @@ final class LatraPayloadPolicy
             'imei' => $wialonUnit['uid'] ?? $wialonUnit['uid2'] ?? null,
             'hw_type' => $wialonUnit['hw'] ?? null,
             'phone' => $wialonUnit['ph'] ?? null,
-            'lat' => isset($source['y']) ? round((float) $source['y'], 8) : null,
-            'lng' => isset($source['x']) ? round((float) $source['x'], 8) : null,
-            'altitude' => isset($source['z']) ? (int) $source['z'] : null,
-            'speed' => isset($source['s']) ? round((float) $source['s'], 2) : null,
-            'bearing' => isset($source['c']) ? round((float) $source['c'], 2) : null,
-            'satellite_count' => isset($source['sc']) ? (int) $source['sc'] : null,
-            'hdop' => isset($params['hdop']) ? round((float) $params['hdop'], 2) : null,
-            'd2d3' => self::detect2D3D($source),
-            'rssi' => isset($params['rssi']) ? (int) $params['rssi'] : (isset($params['gsm']) ? (int) $params['gsm'] : null),
-            'lac' => isset($params['lac']) ? (int) $params['lac']
+            'lat' => is_numeric($source['y'] ?? null) ? round((float) $source['y'], 8) : null,
+            'lng' => is_numeric($source['x'] ?? null) ? round((float) $source['x'], 8) : null,
+            'altitude' => is_numeric($source['z'] ?? null) ? (int) $source['z'] : null,
+            'speed' => is_numeric($source['s'] ?? null) ? round((float) $source['s'], 2) : null,
+            'bearing' => is_numeric($source['c'] ?? null) ? round((float) $source['c'], 2) : null,
+            'satellite_count' => is_numeric($source['sc'] ?? null) ? (int) $source['sc'] : null,
+            'hdop' => is_numeric($params['hdop'] ?? null) ? round((float) $params['hdop'], 2) : null,
+            'd2d3' => SatelliteModePolicy::fromMessage($source, $params),
+            'rssi' => is_numeric($params['rssi'] ?? null) ? (int) $params['rssi'] : (is_numeric($params['gsm'] ?? null) ? (int) $params['gsm'] : null),
+            'lac' => is_numeric($params['lac'] ?? null) ? (int) $params['lac']
                 : (isset($params['gsm_lac']) ? (int) $params['gsm_lac']
                     : (isset($params['lbs_lac']) ? (int) $params['lbs_lac'] : null)),
-            'cell_id' => isset($params['cell_id']) ? (int) $params['cell_id']
+            'cell_id' => is_numeric($params['cell_id'] ?? null) ? (int) $params['cell_id']
                 : (isset($params['cellid']) ? (int) $params['cellid']
                     : (isset($params['cid']) ? (int) $params['cid']
                         : (isset($params['gsm_cellid']) ? (int) $params['gsm_cellid']
                             : (isset($params['gsm_cell_id']) ? (int) $params['gsm_cell_id'] : null)))),
-            'mcc' => isset($params['mcc']) ? (int) $params['mcc'] : null,
+            'mcc' => is_numeric($params['mcc'] ?? null) ? (int) $params['mcc'] : null,
             'mgs_id' => isset($lastMessage['t']) ? (int) $lastMessage['t'] : (isset($position['t']) ? (int) $position['t'] : null),
             'last_message_time' => isset($lastMessage['t']) ? (int) $lastMessage['t'] : (isset($position['t']) ? (int) $position['t'] : null),
         ];
     }
 
-    public static function buildPayload(
-        array $vehicle,
-        array $message,
-        int $activityId,
-        array $addonInfo = [],
-        array $fuelInfo = [],
-    ): array {
-        $timestamp = self::toEpochMs(
-            $message['wialon_msg_time'] ?? $message['last_message_time'] ?? $vehicle['last_message_time'] ?? time(),
-        );
+    /**
+     * Fields the IDD requires on every item, in the documented order.
+     *
+     * @return string[]
+     */
+    public const REQUIRED_ITEM_FIELDS = [
+        'latitude', 'longitude', 'altitude', 'timestamp', 'horizontal_speed',
+        'bearing', 'satellite_count', 'HDOP', 'd2d3', 'RSSI', 'LAC', 'Cell_ID', 'MGS_ID', 'MCC',
+        'activity_id',
+    ];
+
+    /** Activities with documented optional addon_info shapes (IDD §3.1.1). */
+    public const ADDON_ACTIVITIES = [2, 3, 9, 10, 17, 24];
+
+    /** Documented addon_info keys per activity, when supplied. */
+    public const ADDON_KEYS = [
+        2 => ['idleTime', 'v_driver_identification_no'],
+        3 => ['distance_travelled', 'trip_duration', 'avgSpeed', 'maxSpeed'],
+        9 => ['ext_power_voltage', 'int_battery_voltage'],
+        10 => ['ext_power_voltage', 'int_battery_voltage'],
+        17 => ['v_driver_identification_no'],
+        24 => ['v_driver_identification_no'],
+    ];
+
+    /** Required `fuel_info` keys (activity 16). */
+    public const FUEL_KEYS = [
+        'validFlag', 'signalLevel', 'softStatus', 'hardFault',
+        'fuelLevel', 'rtFuelLevel', 'tankTemp', 'channel',
+    ];
+
+    /** Numeric item fields checked for presence and numeric form, in IDD order. */
+    private const NUMERIC_ITEM_FIELDS = [
+        'altitude', 'horizontal_speed', 'bearing', 'satellite_count', 'HDOP',
+        'd2d3', 'RSSI', 'LAC', 'Cell_ID', 'MGS_ID', 'MCC',
+    ];
+
+    /** Missing required source values remain null so validation retains them for review. */
+    public static function buildPayload(array $vehicle, array $message, int $activityId,
+        array $addonInfo = [], array $fuelInfo = []): array
+    {
         $item = [
-            'latitude' => self::format($message['lat'] ?? $vehicle['lat'] ?? null, 'string'),
-            'longitude' => self::format($message['lng'] ?? $vehicle['lng'] ?? null, 'string'),
-            'altitude' => self::format($message['altitude'] ?? $vehicle['altitude'] ?? null, 'string'),
-            'timestamp' => self::format($timestamp, 'string'),
-            'horizontal_speed' => self::format($message['speed'] ?? $vehicle['speed'] ?? null, 'string'),
-            'vertical_speed' => self::format($message['vertical_speed'] ?? $vehicle['vertical_speed'] ?? null, 'string'),
-            'bearing' => self::format($message['bearing'] ?? $vehicle['bearing'] ?? null, 'string'),
-            'satellite_count' => self::format($message['satellite_count'] ?? $vehicle['satellite_count'] ?? null, 'string'),
-            'HDOP' => self::format($message['hdop'] ?? $vehicle['hdop'] ?? null, 'string'),
-            'd2d3' => self::format($message['d2d3'] ?? $vehicle['d2d3'] ?? null, 'string'),
-            'RSSI' => self::format($message['rssi'] ?? $vehicle['rssi'] ?? null, 'string'),
-            'LAC' => self::format($message['lac'] ?? $vehicle['lac'] ?? null, 'string'),
-            'Cell_ID' => self::format($message['cell_id'] ?? $vehicle['cell_id'] ?? null, 'string'),
-            'MGS_ID' => self::format($message['mgs_id'] ?? $vehicle['mgs_id'] ?? null, 'string'),
-            'MCC' => self::format($message['mcc'] ?? $vehicle['mcc'] ?? null, 'string'),
-            'activity_id' => (string) $activityId,
+            'latitude'=>self::format($message['lat'] ?? null,'string'),
+            'longitude'=>self::format($message['lng'] ?? null,'string'),
+            'timestamp'=>self::toEpochMs($message['wialon_msg_time'] ?? $message['last_message_time'] ?? null),
+            'activity_id'=>(string)$activityId,
+            'odometer'=>self::format($message['odometer'] ?? null,'string','0'),
+            'addon_info'=>in_array($activityId,self::ADDON_ACTIVITIES,true) && $addonInfo ? $addonInfo : '',
         ];
-        $odometer = $message['odometer'] ?? $vehicle['odometer'] ?? null;
-        if ($odometer !== null && $odometer !== '') {
-            $item['odometer'] = self::format($odometer, 'string');
+        foreach (['altitude'=>'altitude','horizontal_speed'=>'speed','bearing'=>'bearing',
+            'satellite_count'=>'satellite_count','HDOP'=>'hdop','d2d3'=>'d2d3','RSSI'=>'rssi',
+            'LAC'=>'lac','Cell_ID'=>'cell_id','MGS_ID'=>'mgs_id','MCC'=>'mcc'] as $wire=>$source) {
+            $item[$wire]=self::format($message[$source] ?? null,'string');
         }
-        if (!empty($addonInfo) && in_array($activityId, [2, 3, 4, 9, 10, 11, 14, 16, 17, 24], true)) {
-            $item['addon_info'] = $addonInfo;
+        // Examples include vertical_speed, but the required-field table does not require it.
+        if (self::format($message['vertical_speed'] ?? null,'string') !== null) {
+            $item['vertical_speed']=self::format($message['vertical_speed'],'string');
         }
-        if ($activityId === 16 && !empty($fuelInfo)) {
-            $item['fuel_info'] = $fuelInfo;
-        }
-        return [
-            'vehicle_reg_no' => $vehicle['vehicle_reg_no'] ?? null,
-            'type' => 'poi',
-            'imei' => $vehicle['imei'] ?: null,
-            'items' => [$item],
-        ];
+        if ($activityId===self::ACTIVITY_FUEL_REPORT && $fuelInfo) $item['fuel_info']=$fuelInfo;
+        return ['vehicle_reg_no'=>$vehicle['vehicle_reg_no'] ?? null,'type'=>'poi',
+            'imei'=>$vehicle['imei'] ?? null,'items'=>[$item]];
     }
 
-    public static function buildAddonInfo(int $activityId, array $wialonParams = [], array $customData = []): ?array
+    /** addon_info is optional. Only supplied measurements or documented sentinels are included. */
+    public static function buildAddonInfo(int $activityId,array $wialonParams=[],array $customData=[]): ?array
     {
-        switch ($activityId) {
-            case 2:
-                return [
-                    'idleTime' => self::format($customData['idleTime'] ?? $wialonParams['idle_time'] ?? null, 'string', '0'),
-                    'v_driver_identification_no' => self::format(
-                        $customData['driverId'] ?? $wialonParams['driver_id'] ?? $wialonParams['tco_driver1_id'] ?? $wialonParams['pass'] ?? null,
-                        'string',
-                        'FFFFFFFFFFFFFFFF',
-                    ),
-                ];
-            case 3:
-                return [
-                    'distance_travelled' => self::format($customData['distance'] ?? $wialonParams['mileage'] ?? $wialonParams['mil'] ?? null, 'string', '0'),
-                    'trip_duration' => self::format($customData['duration'] ?? $wialonParams['tco_activity_tm'] ?? null, 'string', '0'),
-                    'avgSpeed' => self::format($customData['avgSpeed'] ?? null, 'string', '0'),
-                    'maxSpeed' => self::format($customData['maxSpeed'] ?? null, 'string', '0'),
-                ];
-            case 9:
-            case 10:
-                $external = $customData['extVolt'] ?? $wialonParams['pwr_ext'] ?? $wialonParams['ext_power'] ?? $wialonParams['io_66'] ?? null;
-                $internal = $customData['intVolt'] ?? $wialonParams['pwr_int'] ?? $wialonParams['int_battery'] ?? $wialonParams['io_67'] ?? null;
-                $output = [];
-                if ($external !== null && $external !== '') {
-                    $output['ext_power_voltage'] = self::format($external, 'string');
-                }
-                if ($internal !== null && $internal !== '') {
-                    $output['int_battery_voltage'] = self::format($internal, 'string');
-                }
-                return empty($output) ? null : $output;
-            case 16:
-                return null;
-            case 17:
-            case 24:
-                return [
-                    'v_driver_identification_no' => self::format(
-                        $customData['driverId'] ?? $wialonParams['driver_id'] ?? $wialonParams['tco_driver1_id'] ?? $wialonParams['pass'] ?? 'FFFFFFFFFFFFFFFF',
-                        'string',
-                    ),
-                ];
-            default:
-                return null;
+        $driver=$customData['driverId'] ?? $wialonParams['driver_id'] ?? $wialonParams['tco_driver1_id'] ?? $wialonParams['pass'] ?? null;
+        $values=match($activityId) {
+            2=>['idleTime'=>$customData['idleTime'] ?? $wialonParams['idle_time'] ?? null,
+                'v_driver_identification_no'=>$driver],
+            3=>['distance_travelled'=>$customData['distance'] ?? null,
+                'trip_duration'=>$customData['duration'] ?? null,
+                'avgSpeed'=>$customData['avgSpeed'] ?? null,'maxSpeed'=>$customData['maxSpeed'] ?? null],
+            9,10=>['ext_power_voltage'=>$customData['extVolt'] ?? $wialonParams['pwr_ext'] ?? null,
+                'int_battery_voltage'=>$customData['intVolt'] ?? $wialonParams['pwr_int'] ?? null],
+            17,24=>['v_driver_identification_no'=>$driver ?? 'FFFFFFFFFFFFFFFF'],
+            default=>[],
+        };
+        $output=[];
+        foreach($values as $key=>$value) {
+            $formatted=self::format($value,'string');
+            if($formatted!==null) $output[$key]=$formatted;
         }
+        return $output ?: null;
     }
 
-    public static function buildFuelInfo(array $wialonParams = [], array $customData = []): array
+    public const MILLIMETRE_UNITS=['mm','millimetre','millimetres','millimeter','millimeters'];
+
+    /** Fuel data is required for activity 16. No sensor values or healthy statuses are invented. */
+    public static function buildFuelInfo(array $wialonParams=[],array $customData=[]): array
     {
-        $fuelLevel = $customData['fuelLevel'] ?? $wialonParams['fuel'] ?? $wialonParams['fuel_level'] ?? null;
-        $realTimeFuelLevel = $customData['rtFuelLevel'] ?? $wialonParams['rt_fuel'] ?? $fuelLevel;
+        $unit=strtolower(trim((string)($customData['unit'] ?? $wialonParams['fuel_unit'] ?? $wialonParams['unit'] ?? '')));
+        $mm=in_array($unit,self::MILLIMETRE_UNITS,true);
+        $level=$mm ? self::millimetres($customData['fuelLevel'] ?? $wialonParams['fuel'] ?? $wialonParams['fuel_level'] ?? null) : null;
+        $rt=$mm ? self::millimetres($customData['rtFuelLevel'] ?? $wialonParams['rt_fuel'] ?? null) : null;
         return [
-            'validFlag' => self::format($customData['validFlag'] ?? '0', 'string'),
-            'signalLevel' => self::format($customData['signalLevel'] ?? $wialonParams['fuel_signal'] ?? '75', 'string'),
-            'softStatus' => self::format($customData['softStatus'] ?? '0', 'string'),
-            'hardFault' => self::format($customData['hardFault'] ?? '0', 'string'),
-            'fuelLevel' => self::format($fuelLevel !== null ? (int) ($fuelLevel * 10) : null, 'string', '0'),
-            'rtFuelLevel' => self::format($realTimeFuelLevel !== null ? (int) ($realTimeFuelLevel * 10) : null, 'string', '0'),
-            'tankTemp' => self::format($customData['tankTemp'] ?? $wialonParams['tank_temp'] ?? null, 'string', '0'),
-            'channel' => self::format($customData['channel'] ?? '1', 'string'),
+            'validFlag'=>self::format($customData['validFlag'] ?? $wialonParams['fuel_valid_flag'] ?? null,'string'),
+            'signalLevel'=>self::format(self::boundedInt($customData['signalLevel'] ?? $wialonParams['fuel_signal'] ?? null,0,99),'string'),
+            'softStatus'=>self::format($customData['softStatus'] ?? $wialonParams['fuel_soft_status'] ?? null,'string'),
+            'hardFault'=>self::format($customData['hardFault'] ?? $wialonParams['fuel_hard_fault'] ?? null,'string'),
+            'fuelLevel'=>self::format($level,'string'), 'rtFuelLevel'=>self::format($rt,'string'),
+            'tankTemp'=>self::format($customData['tankTemp'] ?? self::tenths($wialonParams['tank_temp'] ?? $wialonParams['fuel_temp'] ?? null),'string'),
+            // The IDD explicitly specifies compartment default 1.
+            'channel'=>self::format($customData['channel'] ?? $wialonParams['fuel_channel'] ?? null,'string','1'),
         ];
     }
 
@@ -267,14 +265,14 @@ final class LatraPayloadPolicy
         }
         if (is_string($timestamp)) {
             $epoch = strtotime($timestamp);
-            return $epoch ? (string) ($epoch * 1000) : (string) (time() * 1000);
+            return $epoch ? (string) ($epoch * 1000) : '';
         }
-        return (string) (time() * 1000);
+        return '';
     }
 
     public static function activityRequiresAddon(int $activityId): bool
     {
-        return in_array($activityId, [2, 3, 4, 9, 10, 11, 14, 17, 24], true);
+        return false; // The IDD marks addon_info optional for every activity.
     }
 
     public static function getActivityName(int $activityId): string
@@ -292,40 +290,125 @@ final class LatraPayloadPolicy
         return 2 * $earthRadius * asin(sqrt($a));
     }
 
+    /**
+     * Validates one request body against the IDD item rules.
+     *
+     * The `3*N` batch rule is deliberately not enforced here: this method is used
+     * to reject a single mapped item before it is queued, and the request-level
+     * rule belongs to the transport that assembles batches.
+     *
+     * @return string[] ordered error messages
+     */
     public static function validatePayload(array $payload): array
     {
         $errors = [];
+        if (array_key_exists('__relay_batch_v1', $payload)) $errors[] = 'Reserved relay batch metadata';
         if (empty($payload['vehicle_reg_no'])) {
             $errors[] = 'vehicle_reg_no is required';
         }
-        if (empty($payload['imei'])) {
+        if (!is_string($payload['imei'] ?? null) || !preg_match('/^\d{8,20}$/', $payload['imei'])) {
             $errors[] = 'imei is required';
         }
         if (empty($payload['items']) || !is_array($payload['items'])) {
             $errors[] = 'items array is required';
-        } else {
-            $item = $payload['items'][0];
+            return $errors;
+        }
+        if (!array_is_list($payload['items']) || count($payload['items']) > 200) $errors[] = 'items must be a list of at most 200';
+        foreach ($payload['items'] as $index => $item) {
+            $path = "items[$index]";
+            if (!is_array($item)) {
+                $errors[] = "$path must be an object";
+                continue;
+            }
             foreach (['latitude', 'longitude', 'timestamp', 'activity_id'] as $field) {
                 if (!array_key_exists($field, $item) || $item[$field] === null || $item[$field] === '') {
-                    $errors[] = "items[0].$field is required";
+                    $errors[] = "$path.$field is required";
                 }
             }
-            $nullable = [
-                'altitude', 'horizontal_speed', 'vertical_speed', 'bearing', 'satellite_count',
-                'HDOP', 'd2d3', 'RSSI', 'LAC', 'Cell_ID', 'MGS_ID', 'MCC',
-            ];
-            foreach ($nullable as $field) {
-                if (array_key_exists($field, $item) && $item[$field] !== null && $item[$field] !== ''
-                    && !is_numeric($item[$field])) {
-                    $errors[] = "items[0].$field must be numeric";
+            foreach (self::NUMERIC_ITEM_FIELDS as $field) {
+                if (!array_key_exists($field, $item) || $item[$field] === null || $item[$field] === '') {
+                    $errors[] = "$path.$field is required";
+                } elseif (!is_numeric($item[$field])) {
+                    $errors[] = "$path.$field must be numeric";
                 }
+            }
+            if (($payload['type'] ?? null) !== 'poi') $errors[] = 'type must be poi';
+            foreach (self::REQUIRED_ITEM_FIELDS as $field) {
+                if (!is_string($item[$field] ?? null) || !is_numeric($item[$field])) {
+                    $errors[] = "$path.$field must be a numeric string";
+                }
+            }
+            foreach (['latitude'=>[-90,90], 'longitude'=>[-180,180]] as $field=>[$min,$max]) {
+                if (isset($item[$field]) && is_numeric($item[$field])
+                    && ((float)$item[$field] < $min || (float)$item[$field] > $max)) $errors[] = "$path.$field out of range";
+            }
+            foreach (['altitude','satellite_count','RSSI','LAC','Cell_ID','MCC','activity_id','timestamp'] as $field) {
+                if (isset($item[$field]) && (!is_string($item[$field]) || !preg_match('/^-?\d+$/D',$item[$field]))) {
+                    $errors[] = "$path.$field must be an integer string";
+                }
+            }
+            $mgs = $item['MGS_ID'] ?? null;
+            if (!is_string($mgs) || !ctype_digit($mgs) || strlen(ltrim($mgs,'0')) > 20
+                || (strlen(ltrim($mgs,'0')) === 20 && strcmp(ltrim($mgs,'0'),'18446744073709551615') > 0)) {
+                $errors[] = "$path.MGS_ID must be an unsigned 64-bit integer";
             }
             $activityId = (int) ($item['activity_id'] ?? 0);
-            if (self::activityRequiresAddon($activityId) && empty($item['addon_info'])) {
-                $errors[] = "items[0].addon_info is required for activity $activityId";
+            if (!isset(self::ACTIVITIES[$activityId])) {
+                $errors[] = "$path.activity_id must be 1-24";
             }
-            if ($activityId === 16 && empty($item['fuel_info'])) {
-                $errors[] = 'items[0].fuel_info is required for activity 16';
+            if (isset($item['d2d3']) && $item['d2d3'] !== ''
+                && !in_array((string) $item['d2d3'], ['2', '3'], true)) {
+                $errors[] = "$path.d2d3 must be 2 or 3";
+            }
+            if (isset($item['bearing']) && is_numeric($item['bearing'])
+                && ((float) $item['bearing'] < 0 || (float) $item['bearing'] > 360)) {
+                $errors[] = "$path.bearing out of range";
+            }
+            if (isset($item['timestamp']) && is_numeric($item['timestamp']) && (float) $item['timestamp'] < 946684800000) {
+                $errors[] = "$path.timestamp must be epoch milliseconds";
+            }
+
+            $addon = $item['addon_info'] ?? null;
+            if (in_array($activityId,self::ADDON_ACTIVITIES,true)) {
+                if ($addon!==null && $addon!=='' && !is_array($addon)) $errors[]="$path.addon_info must be an object when supplied";
+                if (is_array($addon)) {
+                    foreach($addon as $key=>$value) {
+                        if($value===null || $value==='') $errors[]="$path.addon_info.$key is missing";
+                    }
+                    if(isset($addon['v_driver_identification_no']) && (!is_string($addon['v_driver_identification_no'])
+                        || !preg_match('/^[0-9A-Fa-f]{16}$/D',$addon['v_driver_identification_no']))) {
+                        $errors[]="$path.addon_info.v_driver_identification_no must be 16 hex digits";
+                    }
+                }
+            } elseif ($addon!==null && $addon!=='') $errors[]="$path.addon_info must be \"\" when activity $activityId has no addon data";
+            foreach(['vertical_speed','odometer'] as $optional) {
+                if(isset($item[$optional]) && !is_numeric($item[$optional])) $errors[]="$path.$optional must be numeric";
+            }
+
+            $fuel = $item['fuel_info'] ?? null;
+            if ($activityId === self::ACTIVITY_FUEL_REPORT) {
+                if (!is_array($fuel) || $fuel === []) {
+                    $errors[] = "$path.fuel_info is required for activity 16";
+                } else {
+                    foreach (self::FUEL_KEYS as $key) {
+                        if (!array_key_exists($key, $fuel) || $fuel[$key] === null || $fuel[$key] === '') {
+                            $errors[] = "$path.fuel_info.$key is required for activity 16";
+                        }
+                    }
+                    foreach (self::FUEL_KEYS as $field) {
+                        if (!is_string($fuel[$field] ?? null) || !preg_match('/^-?\d+$/D',$fuel[$field])) {
+                            $errors[] = "$path.fuel_info.$field must be an integer string";
+                        }
+                    }
+                    if (isset($fuel['signalLevel']) && is_numeric($fuel['signalLevel'])
+                        && ((int) $fuel['signalLevel'] < 0 || (int) $fuel['signalLevel'] > 99)) {
+                        $errors[] = "$path.fuel_info.signalLevel must be 0-99";
+                    }
+                    if (isset($fuel['hardFault']) && is_numeric($fuel['hardFault'])
+                        && !isset(self::HARDWARE_FAULTS[(int) $fuel['hardFault']])) {
+                        $errors[] = "$path.fuel_info.hardFault must be 0-9";
+                    }
+                }
             }
         }
         return $errors;
@@ -343,19 +426,35 @@ final class LatraPayloadPolicy
         if (preg_match('/^[A-Z0-9\-]{3,20}$/', $name)) {
             return $name;
         }
-        return 'W' . ($unit['id'] ?? '00000');
+        return '';
     }
 
-    private static function detect2D3D(array $position): ?int
+    /** Millimetres as the IDD requires: an integer, or null when there is no measurement. */
+    private static function millimetres(mixed $value): ?int
     {
-        $flags = $position['f'] ?? 0;
-        if ($flags & 0x02) {
-            return 3;
+        if ($value === null || $value === '' || $value === 'null' || !is_numeric($value)) {
+            return null;
         }
-        if (isset($position['z']) && $position['z'] !== 0) {
-            return 3;
+        $millimetres = (float) $value;
+        return $millimetres < 0 ? null : (int) round($millimetres);
+    }
+
+    /** Celsius × 10 as the IDD requires, or null when there is no measurement. */
+    private static function tenths(mixed $value): ?string
+    {
+        if ($value === null || $value === '' || $value === 'null' || !is_numeric($value)) {
+            return null;
         }
-        return 2;
+        return (string) (int) round((float) $value * 10);
+    }
+
+    private static function boundedInt(mixed $value, int $min, int $max): ?int
+    {
+        if ($value === null || $value === '' || $value === 'null' || !is_numeric($value)) {
+            return null;
+        }
+        $int = (int) round((float) $value);
+        return $int < $min || $int > $max ? null : $int;
     }
 
     private static function format(mixed $value, string $type, mixed $default = null): mixed

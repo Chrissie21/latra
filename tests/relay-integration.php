@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__.'/vts-fixtures.php';
 /** Real application classes + disposable native SQL; fake paged source, no external requests. */
 if (PHP_SAPI !== 'cli') exit(1);
 $dsn = getenv('LATRA_RELAY_TEST_DSN') ?: '';
@@ -37,7 +38,7 @@ class PagedWialon extends WialonAPI {
 $vehicle = ['id' => 1, 'wialon_unit_id' => 123, 'imei' => '123456789012345', 'vehicle_reg_no' => 'SYNTHETIC', 'engine_param' => 'io_239'];
 $mapper = new RelayMapper($vehicle, array_fill_keys(range(1, 24), true), range(1, 24), 80, 2, 3200, 'teltonika-fmb');
 $now = time() - 60;
-$raw = static fn(int $t, array $p): array => ['t' => $t, 'pos' => ['x' => 39.2, 'y' => -6.8, 's' => 20, 'c' => 90, 'z' => 10, 'sc' => 8], 'p' => $p + ['io_66' => 12500, 'io_67' => 4100]];
+$raw = static fn(int $t, array $p): array => ['t' => $t, 'pos' => ['x' => 39.2, 'y' => -6.8, 's' => 20, 'c' => 90, 'z' => 10, 'sc' => 8], 'p' => vtsTestParams($p + ['io_66'=>12500,'io_67'=>4100])];
 $source = new PagedWialon([$raw($now, ['io_239' => 0]), $raw($now + 1, ['io_239' => 1]),
     $raw($now + 1, ['io_253' => 2]), $raw($now + 2, ['io_239' => 0])]);
 $relay = new DurableRelay($db, 8, static fn(int $n): int => 5, 100, 1048576);

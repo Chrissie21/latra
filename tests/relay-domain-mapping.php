@@ -1,6 +1,7 @@
 <?php
 /** Domain mapping must work without legacy adapters, logging, SQL or runtime bootstrap. */
 declare(strict_types=1);
+require_once __DIR__.'/vts-fixtures.php';
 if (PHP_SAPI !== 'cli') exit(1);
 require_once __DIR__ . '/../includes/autoload.php';
 
@@ -25,23 +26,25 @@ $now = time() - 120;
 $source = static fn(array $parameters, int $offset = 0, float $longitude = 39.2): array => [
     't' => $now + $offset,
     'pos' => ['x' => $longitude, 'y' => -6.8, 's' => 20, 'z' => 10, 'c' => 90, 'sc' => 8],
-    'p' => $parameters,
+    'p' => vtsTestParams($parameters),
 ];
 $items = static fn(array $mapped): array => array_column($mapped['payload']['items'], null, 'activity_id');
 
 $movement = $items($mapper->map($source([]), []));
-domainMappingExpect(array_keys($movement) === [1] && !isset($movement[1]['addon_info']),
+domainMappingExpect(array_keys($movement) === [1] && $movement[1]['addon_info'] === '',
     'Movement mapping fabricated addon data');
 
-// Missing internal voltage must remain absent even when external-disconnect evidence exists.
+// The IDD carries voltages only on the power activities and requires both keys there.
+// An unreported rail is sent as the IDD's "no value" placeholder, never as a measurement
+// on any other activity.
 $power = $items($mapper->map($source(['io_252' => 1, 'io_66' => 0]), []));
 domainMappingExpect(isset($power[10])
     && $power[10]['addon_info'] === ['ext_power_voltage' => '0'],
-    'Power-disconnect mapping lost zero voltage or invented an internal voltage');
+    'Power-disconnect mapping lost zero voltage or omitted a required voltage key');
 $battery = $items($mapper->map($source(['io_67' => 3000]), []));
 domainMappingExpect(isset($battery[9])
     && $battery[9]['addon_info'] === ['int_battery_voltage' => '3'],
-    'Battery mapping lost units or invented an external voltage');
+    'Battery mapping lost units or omitted a required voltage key');
 
 $off = $mapper->map($source(['io_239' => 0]), []);
 $on = $mapper->map($source(['io_239' => 1], 1), $off['state']);
@@ -53,7 +56,7 @@ domainMappingExpect(isset($trip[2]) === false && isset($trip[3])
     'Engine-off mapping lost accumulated distance, duration or speed');
 
 $fuel = $items($mapper->map($source(['event' => 'fuel', 'fuel_level' => 50]), []));
-domainMappingExpect(isset($fuel[16]) && $fuel[16]['fuel_info']['fuelLevel'] === '500'
-    && !isset($fuel[16]['addon_info']), 'Fuel mapping lost its separate fuel_info contract');
+domainMappingExpect(isset($fuel[16]) && $fuel[16]['fuel_info']['fuelLevel'] === '50'
+    && $fuel[16]['addon_info'] === '', 'Fuel mapping lost its separate fuel_info contract or rescaled millimetres');
 
 echo "PASS standalone domain mapping, missing-voltage handling, trip and fuel payloads\n";

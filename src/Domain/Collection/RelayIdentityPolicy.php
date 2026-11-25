@@ -37,8 +37,8 @@ final class RelayIdentityPolicy
     {
         $vehicleReg = $payload['vehicle_reg_no'] ?? null;
         $imei = $payload['imei'] ?? null;
-        if (($vehicleReg !== null && (string) $vehicleReg !== (string) ($vehicle['vehicle_reg_no'] ?? ''))
-            || ($imei !== null && (string) $imei !== (string) ($vehicle['imei'] ?? ''))
+        if (($vehicleReg !== null && $vehicleReg !== '' && (string) $vehicleReg !== (string) ($vehicle['vehicle_reg_no'] ?? ''))
+            || ($imei !== null && $imei !== '' && (string) $imei !== (string) ($vehicle['imei'] ?? ''))
         ) {
             throw new InvalidSubmission('Relay payload identity does not match the owning vehicle');
         }

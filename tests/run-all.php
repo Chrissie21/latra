@@ -13,7 +13,7 @@ if (PHP_SAPI !== 'cli') { http_response_code(404); exit(1); }
 
 $root = dirname(__DIR__);
 // Helpers that are required by other suites, not suites themselves.
-$helpers = ['bootstrap.php', 'relay-mock.php', 'latra-receiver.php'];
+$helpers = ['vts-fixtures.php', 'bootstrap.php', 'relay-mock.php', 'latra-receiver.php', 'latra-idd.php', 'mock-latra-api.php'];
 
 $suites = [];
 foreach (glob($root . '/tests/*.php') ?: [] as $file) {

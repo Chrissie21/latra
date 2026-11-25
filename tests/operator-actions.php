@@ -63,9 +63,9 @@ $queued = [];
 $builder = static fn(array $vehicle, array $source, int $activity, array $addon, array $fuel): array
     => ['vehicle_reg_no' => $vehicle['vehicle_reg_no'], 'imei' => $vehicle['imei'],
         'items' => [['activity_id' => (string) $activity, 'timestamp' => (string) ($source['wialon_msg_time'] * 1000)]]];
-$submit = new SubmitOperatorPayload($repo, $builder, static fn(array $payload): array => [],
+$submit = new SubmitOperatorPayload($repo, $builder, static fn(array $payload): array => empty($payload['items']) ? ['items array is required'] : [],
     static function (array $vehicle, array $payload) use (&$queued): array {
-        $queued[] = [$vehicle['id'], $payload['items'][0]['activity_id']];
+        $queued[] = [$vehicle['id'], $payload['items'][0]['activity_id'] ?? null];
         return ['success' => true, 'queued' => 1, 'message' => 'Saved to the durable relay.'];
     });
 
@@ -73,8 +73,7 @@ $result = $submit->fromMessage(5);
 assertSame(true, $result['success'], 'Message submission did not queue');
 assertSame([[1, '2']], $queued, 'Message submission lost the owning vehicle or activity');
 expectFailure(static fn() => $submit->fromMessage(404), 'Message not found', 'Missing message was accepted');
-expectFailure(static fn() => $submit->fromMessagePayload(5, '{"vehicle_reg_no":"SYNTHETIC"}'),
-    'Payload must contain an items array', 'Payload without items was accepted');
+assertSame(true,$submit->fromMessagePayload(5,'{"vehicle_reg_no":"SYNTHETIC"}')['review'], 'Missing items must be queued for review');
 assertSame(true, $submit->fromMessagePayload(5, '{"items":[{"activity_id":"2"}]}')['success'],
     'Edited payload for a stored message did not queue');
 expectFailure(static fn() => $submit->fromCustomPayload(1, 'not-json'), 'Invalid JSON payload',
@@ -89,8 +88,7 @@ expectFailure(static fn() => $submit->fromStoredPayload(8),
 
 $invalid = new SubmitOperatorPayload($repo, $builder, static fn(array $payload): array => ['items[0].timestamp is required'],
     static fn(array $vehicle, array $payload): array => ['success' => true]);
-expectFailure(static fn() => $invalid->fromCustomPayload(1, '{"items":[{"activity_id":"2"}]}'),
-    'Invalid LATRA payload: items[0].timestamp is required', 'Validation errors were not surfaced');
+assertSame(true,$invalid->fromCustomPayload(1,'{"items":[{"activity_id":"2"}]}')['review'], 'Required-field errors were not retained as review');
 
 $failing = new SubmitOperatorPayload($repo, $builder, static fn(array $payload): array => [],
     static function (array $vehicle, array $payload): array {
@@ -117,7 +115,7 @@ $bulk = new PushActivityToVehicles($repo, $builder,
     static fn(array $params): array => ['fuel' => true],
     static fn(int $vehicle, int $at): array => ['distance' => 1, 'at' => $at],
     static function (array $vehicle, array $payload) use (&$queued): array {
-        $queued[] = [$vehicle['id'], $payload['items'][0]['activity_id']];
+        $queued[] = [$vehicle['id'], $payload['items'][0]['activity_id'] ?? null];
         return ['success' => true, 'queued' => 1, 'message' => 'Saved to the durable relay.'];
     },
     static fn(): int => 1700000200);

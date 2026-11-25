@@ -245,10 +245,10 @@ final class RelayRuntime {
     }
 
     /** Preserve manual submission as durable intent, never a direct network bypass. */
-    public static function queuePayload(array $vehicle, array $payload): array {
+    public static function queuePayload(array $vehicle, array $payload, ?array $sourceEvidence=null): array {
         $settings = self::settings((int) $vehicle['id']);
         return (new \Latra\Application\Collection\QueueManualRelayPayload(
             self::queue($settings), $settings->maxBytes,
-        ))->queue($vehicle, $payload);
+        ))->queue($vehicle, $payload, $sourceEvidence);
     }
 }
