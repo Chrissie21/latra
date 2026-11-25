@@ -29,6 +29,12 @@ final class RelayDeliveryTransportPolicy
         };
     }
 
+    public static function requiresVtsBatching(string $mode, string $mockEndpoint): bool
+    {
+        return $mode === self::MODE_LATRA
+            || str_contains($mockEndpoint, '/data-integration/integration/gps');
+    }
+
     private static function mock(string $endpoint): RelayDeliverySelection
     {
         return $endpoint === '' ? RelayDeliverySelection::disabled() : RelayDeliverySelection::mock($endpoint);

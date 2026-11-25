@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Latra\Application\Delivery;
 
 use Closure;
+use Latra\Domain\Delivery\VtsBatchPolicy;
 use Latra\Domain\Delivery\DeliveryClaimStatus;
 use Latra\Domain\Delivery\DeliveryDisposition;
 use Latra\Domain\Delivery\DeliveryResponsePolicy;
@@ -41,7 +42,7 @@ final class DeliverPendingReport
             $this->hit('attempt');
             $this->repository->assertUnitLock($unit);
             try {
-                $response = $send($pendingReport['payload'], $pendingReport['delivery_key']);
+                $response = $send(VtsBatchPolicy::wireBody($pendingReport['payload']), $pendingReport['delivery_key']);
             } catch (Throwable $error) {
                 // Keep the cause: "HTTP 0" alone cannot explain an unresolved retry.
                 $response = [

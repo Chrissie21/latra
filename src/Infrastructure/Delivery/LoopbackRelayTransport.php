@@ -5,7 +5,7 @@ use InvalidArgumentException;
 /** Pilot transport deliberately has no route to a real LATRA endpoint or credentials. */
 final class LoopbackRelayTransport {
     public function __construct(private string $url) {
-        if (!preg_match('#^http://127\.0\.0\.1:([0-9]{1,5})/$#D', $url, $match)
+        if (!preg_match('#^http://127\.0\.0\.1:([0-9]{1,5})/(?:data-integration/integration/gps)?$#D', $url, $match)
             || (int) $match[1] < 1 || (int) $match[1] > 65535) {
             throw new InvalidArgumentException('An explicit 127.0.0.1 mock URL is required');
         }

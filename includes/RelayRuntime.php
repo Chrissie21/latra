@@ -44,7 +44,10 @@ final class RelayRuntime {
     private static function queue(RelaySettings $settings): DurableRelay {
         return new DurableRelay(Database::getInstance(), Schema::configInt('outbox_max_tries', 8),
             static fn(int $attempt): int => RelayRuntimePolicy::backoff($attempt),
-            $settings->maxPendingRecords, $settings->maxPendingBytes);
+            $settings->maxPendingRecords, $settings->maxPendingBytes, null,
+            RelayDeliveryTransportPolicy::requiresVtsBatching(
+                (string) Schema::config('relay_delivery_transport', 'mock'),
+                (string) Schema::config('relay_mock_url', '')));
     }
 
     /** Enrollment changes only relay settings, never activity mappings or schedules. */

@@ -15,7 +15,7 @@ final class DurableRelay implements RelayWindowCollector {
     private RecoverRelayReviews $reviewRecovery;
 
     public function __construct(PDO $db, int $maxAttempts, callable $backoff,
-        int $maxPendingRecords, int $maxPendingBytes, ?callable $fault = null) {
+        int $maxPendingRecords, int $maxPendingBytes, ?callable $fault = null, bool $vtsBatching = false) {
         if (min($maxAttempts, $maxPendingRecords, $maxPendingBytes) < 1) {
             throw new InvalidArgumentException('Explicit positive retry/capacity budgets required');
         }
@@ -30,7 +30,7 @@ final class DurableRelay implements RelayWindowCollector {
             new PdoRelayReviewRecoveryRepository($db, $maxPendingBytes, $fault),
         );
         $this->delivery = new DeliverPendingReport(
-            new PdoRelayDeliveryRepository($db, fn(string $stage) => $this->hit($stage)),
+            new PdoRelayDeliveryRepository($db, fn(string $stage) => $this->hit($stage), $vtsBatching),
             $maxAttempts,
             $backoff,
             fn(string $stage) => $this->hit($stage),
