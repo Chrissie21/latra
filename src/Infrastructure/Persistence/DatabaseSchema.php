@@ -7,7 +7,7 @@ namespace Latra\Infrastructure\Persistence;
  * Idempotent schema bootstrap and seed data.
  *
  * Every statement is safe to repeat so an interrupted upgrade resumes instead of
- * failing; the compatibility `Schema` facade delegates here.
+ * failing.
  */
 class DatabaseSchema {
     public const VERSION = 11;

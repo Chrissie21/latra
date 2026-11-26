@@ -4,7 +4,6 @@ require_once __DIR__ . "/autoload.php";
  * Scheduler.
  */
 class Scheduler {
-    /** Compatibility entry points compose the scheduling use case on one database session. */
     public static function tickBuckets(): void { self::work()->buckets(); }
     public static function tickJobs(): void { self::work()->jobs(); }
     public static function runBucket(array $bucket): void { self::work()->bucket($bucket); }
@@ -43,12 +42,7 @@ class Scheduler {
         ]);
     }
 
-    /**
-     * Crash recovery for the relay-only architecture.
-     *
-     * The legacy outbox is retained as history and is never produced or drained,
-     * so recovery only clears locks left behind by an interrupted scheduler run.
-     */
+    /** Clear locks left by an interrupted scheduler run. */
     private static function jobReconcile(): int {
         return (new \Latra\Infrastructure\Persistence\PdoMaintenanceRepository(Database::getInstance()))->reconcileJobLocks();
     }

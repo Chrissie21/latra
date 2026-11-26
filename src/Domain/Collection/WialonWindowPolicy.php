@@ -10,9 +10,6 @@ use RuntimeException;
  * Bounded Wialon window rules: an explicit unit/time range, a declared count
  * that fits the record budget, pages that match their declared size, source
  * timestamps inside the requested window, and a cumulative byte ceiling.
- *
- * Values and failure messages are unchanged from the legacy client so callers
- * and operators keep the same diagnostics.
  */
 final class WialonWindowPolicy
 {

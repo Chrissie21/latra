@@ -1,7 +1,7 @@
 <?php
 require_once __DIR__.'/autoload.php';
 
-/** Compatibility name and deployment configuration boundary. */
+/** Database connection facade. */
 class Database extends \Latra\Infrastructure\Persistence\DatabaseConnection {
     protected static function createConnection(): PDO {
         if (!defined('DB_HOST') || !defined('DB_NAME') || !defined('DB_USER') || !defined('DB_PASS') || !defined('DB_CHARSET')) {

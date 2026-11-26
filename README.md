@@ -2,7 +2,7 @@
 
 GPS Fleet Compliance & Automated VTS Submission Platform for Tanzania's Land Transport Regulatory Authority (LATRA).
 
-Polls GPS/telemetry from Wialon, classifies 24 activity types, and submits LATRA-compliant payloads — fully automated with a bucket-based scheduler, durable outbox, and real-time dashboard.
+Polls GPS/telemetry from Wialon, classifies 24 activity types, and queues LATRA-compliant payloads — fully automated with a bucket-based scheduler, durable relay, and an HTTP/CLI-only surface (no web UI).
 
 ---
 
@@ -10,15 +10,13 @@ Polls GPS/telemetry from Wialon, classifies 24 activity types, and submits LATRA
 
 - **24 LATRA Activities** — Movement, Engine ON/OFF, Speeding, Harsh Driving, Panic, Battery, Power, Tampering, Accident, Fuel, iButton, Geofence, and more
 - **Bucket Automation** — One bucket per activity, configurable cadence (5 min default), per-vehicle assignment, on-demand runs
-- **Master Kill Switch** — Toggle all automations on/off with a single button
-- **Durable Outbox** — Retry with exponential backoff, circuit breaker on LATRA, idempotent submissions
+- **Durable Relay** — Bounded collection, checkpointed streams, capacity limits, review recovery, idempotent submissions
 - **Event Detection** — Real-time classification from Wialon parameters: g-force, ignition, battery, power, SOS
 - **Emergency Mode** — 1 Hz polling during active emergencies with event tracking
 - **Device Health** — Online/offline status, battery voltage, external power, tamper detection
 - **Fleet Sync** — Auto-sync vehicles from Wialon, IMEI backfill
 - **GPS Validation** — Rejects invalid coordinates, timestamps, HDOP/RSSI ranges before submission
 - **Security** — Argon2id passwords, CSRF, rate limiting, account lockout, AES-256 encrypted secrets, audit log
-- **Dashboard** — Real-time KPIs, push success rates, queue depth, device health overview
 
 ---
 
@@ -28,8 +26,7 @@ Polls GPS/telemetry from Wialon, classifies 24 activity types, and submits LATRA
 |-------|-----------|
 | Language | PHP 8.1+ (vanilla, no framework) |
 | Database | MySQL 10.5+ / MariaDB 10.6+ |
-| Web Server | Apache 2.4 with mod_php |
-| Frontend | Vanilla JS, CSS, SweetAlert2, Leaflet maps |
+| Web Server | Apache 2.4 with mod_php (JSON API only) |
 | Scheduler | Cron → `cron.php` (minute-level) |
 | External APIs | Wialon Remote API, LATRA VTS Annexure-1 |
 
@@ -37,7 +34,7 @@ No Composer, no Node.js, no build step. Namespaced `src/` classes use the projec
 
 ## Backend layering direction
 
-New backend work is being separated incrementally into domain rules, application use cases, infrastructure (PDO repositories and external API adapters), and HTTP/CLI entry points. Existing root pages, `api.php`, cron scripts, and classes under `includes/` remain in place and keep their current contracts while each flow is migrated and regression-tested. This avoids a framework change or a broad move that could break deployments.
+New backend work is being separated incrementally into domain rules, application use cases, infrastructure (PDO repositories and external API adapters), and HTTP/CLI entry points. `api.php`, cron scripts, and classes under `includes/` remain in place and keep their current contracts while each flow is migrated and regression-tested. This avoids a framework change or a broad move that could break deployments.
 
 ---
 
@@ -59,11 +56,12 @@ mysql -u root -e "CREATE DATABASE IF NOT EXISTS latra_wialon CHARACTER SET utf8m
 # 4. Create admin user (sets role=admin, generates APP_KEY, creates tables)
 php scripts/install.php admin your_password
 
-# 5. Open browser
-# http://localhost/latra-wialon-integration/login.php
+# 5. Start the worker (see the authenticated API notes in SETUP_GUIDE.md)
+php bin/worker.php
 ```
 
-Schema, tables, and migrations auto-create on first run.
+Schema, tables, and migrations auto-create on first run. The web dashboard, login, settings and
+audit pages were removed; `api.php` is the only HTTP surface.
 
 **Cron** (minimal setup):
 
@@ -73,7 +71,7 @@ Schema, tables, and migrations auto-create on first run.
 15 4 * * * /bin/bash /path/to/latra/scripts/cleanup.sh >> /path/to/latra/logs/cleanup.log 2>&1
 ```
 
-`cleanup.sh` enforces retention: streaming Wialon→LATRA data 14 days (env `MAINTAIN_STREAM_DAYS`), automation 60d, audit 365d, AI 180d; rotates `error.log`/`cron.log` at 20 MB; gzips old backups. Constant data (vehicles, users, jobs, buckets, config, KPIs) is never deleted.
+`cleanup.sh` enforces retention: streaming Wialon→LATRA data 14 days (env `MAINTAIN_STREAM_DAYS`), automation 60d, audit 365d; rotates `error.log`/`cron.log` at 20 MB; gzips old backups. Constant data (vehicles, users, jobs, buckets, config, KPIs) is never deleted.
 
 For detailed instructions see **[SETUP_GUIDE.md](SETUP_GUIDE.md)**.
 
@@ -87,42 +85,28 @@ latra-wialon-integration/
 ├── src/                    # Namespaced domain and application code
 │   ├── Domain/            # Collection, delivery and ingestion policies
 │   ├── Application/       # Use cases and repository/effect ports
-│   └── Infrastructure/    # PDO persistence, Wialon and legacy adapters
+│   └── Infrastructure/    # PDO persistence, Wialon and service adapters
 ├── .env                    # Secrets (not in git)
 ├── cron.php                # Scheduler entry point
 ├── database.sql            # Full schema dump
 │
-├── index.php               # Dashboard
-├── login.php               # Authentication
-├── vehicles.php            # Fleet list
-├── vehicle_detail.php      # Per-vehicle detail + history
-├── activities.php          # 24 LATRA activity definitions
-├── automation.php          # Bucket management + master toggle
-├── run_logs.php            # Run history
-├── push_log.php            # LATRA submission audit
-├── latra_audit.php         # Compliance audit view
-├── health.php              # Device health monitoring
-├── settings.php            # System configuration
-├── api.php                 # JSON API endpoints
+├── api.php                 # JSON API endpoints (only HTTP surface)
 │
-├── includes/               # Existing application, integration, and storage classes
+├── includes/               # Application services and compatibility adapters
 │   ├── autoload.php        # PSR-4-compatible src/ loader and legacy class loader
 │   ├── Database.php        # PDO singleton, auto-reconnect
 │   ├── Auth.php            # Sessions, CSRF, rate limiting
-│   ├── WialonAPI.php       # Wialon Remote API client
-│   ├── LatraAdapter.php    # LATRA HTTP client + circuit breaker
+│   ├── WialonAPI.php       # Wialon Remote API client (compatibility subclass)
+│   ├── RelayRuntime.php    # Relay collection/delivery composition root
 │   ├── LatraMapper.php     # Wialon → LATRA payload builder
-│   ├── IngestPipeline.php  # Ingest → validate → store → detect
 │   ├── BucketRunner.php    # Per-bucket vehicle processor
-│   ├── EventDetector.php   # Activity classification (24 types)
-│   ├── Outbox.php          # Durable retry queue
 │   ├── Scheduler.php       # Job scheduler with locking
 │   ├── FleetSync.php       # Wialon fleet synchronization
 │   └── ...                 # 20+ service classes
 │
 ├── scripts/                # Setup & maintenance
-├── bin/                    # Worker daemon
-├── assets/                 # CSS + JS
+├── bin/                    # Worker and relay CLI
+├── assets/                 # Static assets retained for API consumers
 ├── logs/                   # Runtime logs
 └── docs/                   # Architecture documentation
 ```
@@ -132,13 +116,12 @@ latra-wialon-integration/
 ## Data Flow
 
 ```
-GPS Device → Wialon Server → [API poll] → BucketRunner
+GPS Device → Wialon Server → [API poll] → BucketRunner / EventEngine
     → EventDetector (classify activity 1-24)
-    → message_log (store)
-    → Outbox (enqueue)
-    → LatraAdapter (HTTP POST)
-    → LATRA Server (vts.latra.go.tz:8090)
-    → Response: accepted / rejected / retry
+    → relay collection (bounded, checkpointed streams)
+    → relay_pending (durable queue, capacity and review rules)
+    → flush → relay transport (real LATRA delivery stays disabled by policy)
+    → Response: accepted / deferred / review
 ```
 
 ---
@@ -149,9 +132,8 @@ GPS Device → Wialon Server → [API poll] → BucketRunner
 |-----------|-------------|
 | **Buckets** | 24 buckets (one per LATRA activity), each with configurable interval, cooldown, and vehicle assignment |
 | **Scheduler** | `cron.php` runs every minute, processes buckets first, then jobs |
-| **Outbox** | Durable queue with `pending → in_flight → sent/failed`, exponential backoff, max 8 retries |
-| **Circuit Breaker** | Pauses LATRA submissions for 60s after 5 consecutive connection failures |
-| **Master Toggle** | Single switch to enable/disable all buckets and scheduler jobs |
+| **Relay** | Durable queue with `pending → delivered/review`, bounded page/byte/capacity budgets and explicit review recovery |
+| **Scheduling toggles** | `scheduler_enabled`, `event_engine_enabled` and per-bucket enablement live in the `config`/`automation_buckets` tables (no UI) |
 
 ---
 
@@ -173,15 +155,8 @@ All config via `.env` file:
 | `APP_KEY` | No | Encryption key (auto-generated if empty) |
 | `FORCE_HTTPS` | No | `on` to enforce HTTPS |
 | `APP_ENV` | No | `production` (default) or `development` |
-| `OPENAI_API_KEY` | No | AI Assistant key (any OpenAI-compatible endpoint; empty = assistant disabled) |
-| `AI_BASE_URL` | No | Chat-completions URL (OpenAI / OpenRouter / Azure). Default: OpenAI |
-| `OPENAI_MODEL` | No | Model name (e.g. `openai/gpt-4o` on OpenRouter) |
-| `AI_RATE_LIMIT` | No | Max assistant requests per user/IP per minute (`20`) |
-| `AI_MAX_TOKENS` | No | Max answer tokens (`900`) |
-| `AI_TIMEOUT` | No | Per-request timeout in seconds (`45`) |
-| `AI_AUDIT` | No | `on`/`off` — write `ai.chat` audit rows (`on`) |
 
-Runtime tunables in the `config` database table (editable via Settings page).
+Runtime tunables in the `config` database table.
 
 ---
 

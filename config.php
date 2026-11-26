@@ -34,7 +34,7 @@ function loadEnvFile(string $path): void {
 
 function envValue(string $key, string $default = ''): string {
     $value = $_ENV[$key] ?? getenv($key);
-    return ($value === false || $value === null) ? $default : (string) $value;
+    return $value === false ? $default : (string) $value;
 }
 
 loadEnvFile(__DIR__ . '/.env');
@@ -45,9 +45,7 @@ if (!is_dir(LOGS_DIR)) {
 }
 
 define('APP_ENV', envValue('APP_ENV', 'production'));
-// Delivery is relay-only: the durable relay is the single LATRA delivery path.
-// The legacy direct-send mode was retired deliberately, so an explicit
-// unsupported value still fails closed instead of silently falling back.
+// Relay delivery is the only supported mode.
 define('DELIVERY_ARCHITECTURE', envValue('DELIVERY_ARCHITECTURE', 'relay'));
 if (DELIVERY_ARCHITECTURE !== 'relay') {
     throw new RuntimeException('Unsupported delivery architecture; relay delivery is the only supported mode');
@@ -109,7 +107,6 @@ if (PHP_SAPI !== 'cli' && !headers_sent()) {
     header('X-Content-Type-Options: nosniff');
     header('X-Frame-Options: DENY');
     header('Referrer-Policy: strict-origin-when-cross-origin');
-    // API-only surface: no page, asset or third-party origin is loaded any more.
     header("Content-Security-Policy: default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
     if (!empty($_SERVER['HTTPS']) || ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https') {
         header('Strict-Transport-Security: max-age=31536000; includeSubDomains');

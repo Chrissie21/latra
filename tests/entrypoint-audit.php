@@ -1,9 +1,5 @@
 <?php
-/**
- * Entry points and compatibility adapters must only compose: persistence,
- * scheduling, locking and provisioning rules belong to the application and
- * infrastructure layers that tests can exercise without a real entry point.
- */
+/** Entry points and adapters must only compose application and infrastructure logic. */
 declare(strict_types=1);
 if (PHP_SAPI !== 'cli') exit(1);
 $root = dirname(__DIR__);
@@ -49,7 +45,6 @@ foreach ($adapters as $file) {
         auditFail('includes/' . basename($file) . ' still reads through raw Database helpers');
     }
 }
-// The web UI was removed by owner decision: the bootstrap must not carry its assets.
 $config = (string) file_get_contents($root . '/config.php');
 foreach (['openstreetmap', 'cdnjs', 'jsdelivr', 'fonts.googleapis', 'fonts.gstatic', 'code.jquery', 'unpkg'] as $origin) {
     if (stripos($config, $origin) !== false) {

@@ -7,12 +7,7 @@ use Closure;
 use RuntimeException;
 use Throwable;
 
-/**
- * Operator submissions become durable relay intent; no transport is invoked here.
- *
- * Payload mapping and validation are injected because the submission shapes are
- * owned by the LATRA payload policy and its compatibility adapter.
- */
+/** Operator submissions become durable relay intent; no transport is invoked here. */
 final class SubmitOperatorPayload
 {
     private Closure $mapper;

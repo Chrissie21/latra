@@ -1,7 +1,5 @@
 <?php
-/**
- * Compatibility adapter for configured Wialon parameter aliases.
- */
+/** Resolves configured Wialon parameter aliases. */
 use Latra\Domain\Ingestion\ParameterResolutionPolicy;
 use Latra\Infrastructure\Persistence\PdoParameterAliasRepository;
 

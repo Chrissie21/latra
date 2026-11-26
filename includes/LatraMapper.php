@@ -1,7 +1,5 @@
 <?php
-/**
- * Compatibility adapter for LATRA mapping and trip-stat persistence.
- */
+/** Builds LATRA payloads and trip-stat data. */
 use Latra\Domain\Ingestion\LatraPayloadPolicy;
 
 require_once __DIR__ . '/autoload.php';

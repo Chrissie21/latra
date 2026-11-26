@@ -6,16 +6,11 @@ namespace Latra\Infrastructure\Delivery;
 use InvalidArgumentException;
 
 /**
- * Real LATRA delivery transport.
+ * HTTP transport for one LATRA delivery attempt.
  *
- * Reuses the wire format from the retired direct-send adapter: POST JSON
- * with Basic authentication and the persisted delivery key, where acceptance is
- * HTTP 200 with {"status":"1"}. Actual LATRA acceptance remains unverified.
- * A started attempt can outlast the flush loop's soft deadline.
- *
- * Authentication material, retry scheduling, attempt budgets and review
- * classification remain upstream; this adapter only performs one HTTP attempt
- * and reports what the endpoint answered.
+ * POST JSON with Basic authentication and the persisted delivery key. HTTP 200
+ * with {"status":"1"} is acceptance. A started attempt can outlast the flush
+ * loop's soft deadline.
  */
 final class LatraRelayTransport
 {

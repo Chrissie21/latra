@@ -1,5 +1,5 @@
 <?php
-/** Application cutover coordinator. Every active producer uses the same durable relay. */
+/** Durable relay coordinator. */
 use Latra\Application\Collection\RelayPayloadMapper;
 use Latra\Application\Collection\EnrollRelayVehicle;
 use Latra\Application\Collection\CollectRelayBucket;

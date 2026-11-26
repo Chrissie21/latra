@@ -9,9 +9,6 @@ use Latra\Domain\Ingestion\ActivityDetectionPolicy;
  * Emergency event lifecycle rules: which activities open an emergency, how an
  * event type is normalised, which activity an event records, and how an event
  * identifier is shaped.
- *
- * These rules were previously duplicated inside the legacy EmergencyHandler
- * static helpers; the values are intentionally unchanged.
  */
 final class EmergencyEventPolicy
 {

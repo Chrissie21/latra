@@ -1,5 +1,5 @@
 <?php
-/** Synthetic SQLite verifies persistence shapes and the real compatibility entry points. */
+/** Synthetic SQLite verifies persistence shapes and the public entry points. */
 if (PHP_SAPI !== 'cli') exit(1);
 require __DIR__ . '/../includes/autoload.php';
 const DATE_FORMAT = 'Y-m-d H:i:s';

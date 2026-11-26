@@ -9,8 +9,7 @@ use RuntimeException;
 /**
  * Relay identity rules: which vehicle a collection unit belongs to, whether a
  * payload claims the vehicle that owns it, and which enrollment budgets are
- * mandatory. Values and failure messages are unchanged from the legacy
- * coordinator so operators keep the same diagnostics.
+ * mandatory.
  */
 final class RelayIdentityPolicy
 {

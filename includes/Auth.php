@@ -1,12 +1,6 @@
 <?php
 require_once __DIR__ . '/autoload.php';
-/**
- * Authentication, session guarding, CSRF protection, rate limiting and audit.
- *
- * API-only surface: the web UI (and its page guards, HTML token field and role
- * labels) was removed by owner decision, so this adapter exposes only the
- * session/credential/CSRF/audit contract the entry points use.
- */
+/** Authentication, session guarding, CSRF protection, rate limiting and audit. */
 class Auth {
     private static function repository(): \Latra\Infrastructure\Persistence\PdoAuthRepository {
         return new \Latra\Infrastructure\Persistence\PdoAuthRepository(Database::getInstance());

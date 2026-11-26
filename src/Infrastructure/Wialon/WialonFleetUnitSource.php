@@ -6,10 +6,7 @@ namespace Latra\Infrastructure\Wialon;
 use Closure;
 use Latra\Application\Collection\FleetUnitSource;
 
-/**
- * Wialon-backed fleet unit source. One client instance and session per
- * `open`/`close` pair, matching the legacy one-login-per-sync behaviour.
- */
+/** Wialon-backed fleet unit source with one client session per open/close pair. */
 final class WialonFleetUnitSource implements FleetUnitSource
 {
     private Closure $createClient;

@@ -23,7 +23,7 @@ final class RelayDeliveryGatePolicy
 
     /**
      * Activity ids in a stored pending payload. Undecodable or missing data is
-     * treated as an empty payload, matching the legacy tolerant decode.
+     * treated as an empty payload.
      */
     public static function activityIds(string $payload): array
     {

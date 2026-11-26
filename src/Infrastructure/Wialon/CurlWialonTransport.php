@@ -6,11 +6,7 @@ namespace Latra\Infrastructure\Wialon;
 use InvalidArgumentException;
 use Latra\Application\Collection\WialonTransport;
 
-/**
- * cURL transport for the Wialon ajax API. Transport policy (timeouts, TLS
- * verification, form encoding and the optional streaming byte bound) is
- * unchanged from the legacy client; only the response decoding moved out.
- */
+/** cURL transport for the Wialon ajax API with bounded response decoding. */
 final class CurlWialonTransport implements WialonTransport
 {
     public function post(string $url, string $encodedParams, ?int $maxResponseBytes): ?array

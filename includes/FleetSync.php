@@ -1,11 +1,5 @@
 <?php
-/**
- * Fleet sync.
- *
- * Compatibility and composition boundary: unit mapping and the upsert/session
- * lifecycle run through the extracted application use case, while relay window
- * collection runs through the collection use case.
- */
+/** Fleet sync. */
 use Latra\Application\Collection\RelayPayloadMapper;
 use Latra\Application\Collection\SyncFleetVehicles;
 use Latra\Infrastructure\Collection\SystemFleetSyncClock;

@@ -1,11 +1,5 @@
 <?php
-/**
- * Emergency event handler.
- *
- * Compatibility and composition boundary: emergency type mapping, active
- * counts, queue flush and the relay handoff delegate to the extracted
- * application use cases and PDO persistence adapter.
- */
+/** Emergency event handler. */
 use Latra\Domain\Emergency\EmergencyEventPolicy;
 use Latra\Infrastructure\Persistence\PdoEmergencyEventRepository;
 

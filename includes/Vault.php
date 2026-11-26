@@ -1,7 +1,7 @@
 <?php
 require_once __DIR__ . '/autoload.php';
 
-/** Compatibility names for secret configuration; no credential is read until requested. */
+/** Secret configuration facade; credentials are read on demand. */
 class Vault {
     private static function repository(): \Latra\Infrastructure\Persistence\PdoSecretRepository {
         return new \Latra\Infrastructure\Persistence\PdoSecretRepository(Database::getInstance());

@@ -109,16 +109,6 @@ LATRA_PASSWORD=YOUR_LATRA_PASSWORD
 APP_ENV=production
 FORCE_HTTPS=off
 APP_KEY=$(openssl rand -hex 32)
-
-# AI Assistant (server-side only — never share a real key)
-# Any OpenAI-compatible endpoint works (OpenAI, OpenRouter, Azure).
-OPENAI_API_KEY=YOUR_OPENAI_API_KEY
-AI_BASE_URL=https://api.openai.com/v1/chat/completions
-OPENAI_MODEL=openai/gpt-4o
-AI_RATE_LIMIT=20
-AI_MAX_TOKENS=900
-AI_TIMEOUT=45
-AI_AUDIT=on
 ```
 
 ### Important Notes
@@ -126,7 +116,6 @@ AI_AUDIT=on
 - **WIALON_TOKEN**: Generate at https://hst-api.wialon.com → User Settings → Access Tokens. Enable "Allow reading messages" and "Allow modifying objects".
 - **LATRA credentials**: Provided by LATRA after your fleet is registered. Each fleet has its own username/password.
 - **APP_KEY**: Generate a random key for encryption: `openssl rand -hex 32`
-- **OPENAI_API_KEY / AI_BASE_URL**: The assistant talks to an OpenAI-compatible chat-completions API. For OpenRouter use `AI_BASE_URL=https://openrouter.ai/api/v1/chat/completions` and `OPENAI_MODEL=openai/gpt-4o`. If left empty (`OPENAI_API_KEY=`), the assistant reports "not configured" and stays greyed out.
 
 ---
 
@@ -168,7 +157,7 @@ php scripts/install.php admin
 
 **Save this password immediately** — it won't be shown again.
 
-To create non-admin users (operator, viewer, latra_*), use `setup_admin.php` (sets `operator` by default) then change the role in-app via the **Users** page (`/users.php`, admin-only) or directly:
+To create non-admin users (operator, viewer, latra_*), use `setup_admin.php` (sets `operator` by default), then set the role through `api.php` (admin action) or directly:
 
 ```bash
 php scripts/setup_admin.php operator1 pass123
@@ -179,10 +168,13 @@ mysql -u root latra_wialon -e "UPDATE app_users SET role='operator' WHERE userna
 
 | Role | Access |
 |------|--------|
-| `admin` | Full access — Users, Settings, buckets, all pages |
-| `operator` | Dashboard, vehicles, push/run logs, settings (no Users page) |
-| `viewer` | Read-only: dashboard, vehicles, push log, audit, health (no write UI) |
-| `latra_user` / `latra_viewer` / `latra_inspector` / `latra_admin` | LATRA-specific restricted scopes (configured via `/users.php`) |
+| `admin` | Full API access — users, settings, buckets, data actions |
+| `operator` | Standard API actions (no user administration) |
+| `viewer` | Read-only API actions |
+| `latra_user` / `latra_viewer` / `latra_inspector` / `latra_admin` | LATRA-specific restricted API scopes |
+
+The web UI was removed. Roles, permissions, settings and bucket state are managed through
+`api.php`, `bin/` and direct table updates; `Auth` keeps its permission checks for the API.
 
 ---
 
@@ -194,7 +186,7 @@ mysql -u root latra_wialon -e "UPDATE app_users SET role='operator' WHERE userna
 sudo /opt/lampp/lampp start
 ```
 
-Access at: **http://localhost/latra-wialon-integration/login.php**
+The only HTTP surface is the JSON API at **http://localhost/latra-wialon-integration/api.php**.
 
 ### Standalone Apache
 
@@ -213,17 +205,18 @@ sudo systemctl restart apache2
 ### Verify
 
 ```bash
-curl -s -o /dev/null -w "%{http_code}" http://localhost/latra-wialon-integration/login.php
-# Should return: 200
+curl -s -o /dev/null -w "%{http_code}" http://localhost/latra-wialon-integration/api.php
+# Should return: 401 (authentication required) — proves the dispatcher is reachable
 ```
 
 ---
 
-## 7. Initial Login & Verification
+## 7. Initial API Verification
 
-1. Open **http://localhost/latra-wialon-integration/login.php**
-2. Log in with the admin credentials from Step 5
-3. You'll land on the **Dashboard** showing fleet status
+1. Authenticate against `api.php` (session login or the API's CSRF/token flow) with the admin
+   credentials from Step 5.
+2. Confirm the dispatcher returns JSON rather than an HTML page.
+3. There is no dashboard page; fleet state is read through `api.php` actions or `bin/collection.php`.
 
 ### Verify API Connectivity
 
@@ -240,17 +233,13 @@ $w = new WialonAPI(WIALON_BASE_URL, WIALON_TOKEN);
 echo $w->login() ? "Wialon: CONNECTED\n" : "Wialon: FAILED\n";
 '
 
-# Test LATRA connection
+# Verify relay configuration (direct LATRA submission no longer exists)
 php -r '
 require_once "config.php";
-require_once "includes/Database.php";
-require_once "includes/Vault.php";
-require_once "includes/Logger.php";
-require_once "includes/LatraAdapter.php";
-$result = LatraAdapter::submit(["vehicle_reg_no" => "TEST", "type" => "poi", "imei" => "0000", "items" => []], "test-connectivity");
-echo "LATRA HTTP: " . $result["httpCode"] . "\n";
-echo "LATRA Response: " . substr($result["response"], 0, 200) . "\n";
+echo "Delivery architecture: " . DELIVERY_ARCHITECTURE . "\n";
+echo RelayRuntime::enabled() ? "Relay: ENABLED\n" : "Relay: DISABLED\n";
 '
+# Real LATRA delivery stays disabled by policy; no connectivity probe is performed.
 ```
 
 ---
@@ -373,13 +362,11 @@ SELECT 1, seq.n, 1 FROM (
 ) seq;
 ```
 
-### Manage Buckets via Web UI
+### Manage Buckets without a UI
 
-Navigate to **Automation** page to:
-- View all buckets and their status
-- Enable/disable individual buckets
-- Trigger on-demand runs
-- View run history and error logs
+Bucket state lives in `automation_buckets`; the former Automation page was removed. Use SQL or
+`bin/worker.php` (on-demand run) to enable/disable buckets, trigger runs and inspect
+`automation_runs` / `automation_run_items` history.
 
 ---
 
@@ -451,22 +438,19 @@ Wialon GPS Device
   Wialon Server (hst-api.wialon.com)
       │
       ▼ (API poll every 5 min)
-  BucketRunner ──► EventDetector (classify activity 1–24)
-      │                    │
-      │                    ▼
-      │             message_log (store + latra_payload)
-      │                    │
-      │                    ▼
-      │             Outbox (enqueue if activity has enabled bucket)
-      │                    │
-      ▼                    ▼
-  LatraAdapter ◄── Outbox::claimBatch (batch push)
-      │
-      ▼ (HTTP POST)
-  LATRA Server (vts.latra.go.tz:8090)
-      │
-      ▼
-  Response: {"status":"1"} (accepted) or {"status":"0","message":"..."} (rejected)
+  BucketRunner / EventEngine ──► EventDetector (classify activity 1–24)
+      │                                │
+      │                                ▼
+      │                    relay collection (bounded, checkpointed)
+      │                                │
+      ▼                                ▼
+  relay_units cursors          relay_pending (durable queue)
+                                       │
+                                       ▼ (flush, rate/work bounded)
+                                 relay transport
+                                       │
+                                       ▼
+                        accepted / deferred / review (no direct-send path)
 ```
 
 ### Activity Classification
@@ -517,23 +501,16 @@ The `EventDetector` examines each Wialon message and assigns one of 24 LATRA act
 
 ---
 
-## 12. Web Pages
+## 12. HTTP Surface
 
-| Page | URL | Description |
-|------|-----|-------------|
-| Login | `/login.php` | Authentication |
-| Dashboard | `/index.php` | Fleet overview, health, stats |
-| Vehicles | `/vehicles.php` | Fleet list with status |
-| Vehicle Detail | `/vehicle_detail.php?id=N` | Per-vehicle history, device health |
-| Activities | `/activities.php` | 24 LATRA activity definitions |
-| Automation | `/automation.php` | Bucket management, on-demand runs |
-| Run Logs | `/run_logs.php` | Automation run history |
-| Push Log | `/push_log.php` | LATRA submission audit trail |
-| LATRA Audit | `/latra_audit.php` | Compliance audit view |
-| Health | `/health.php` | Device health monitoring |
-| Settings | `/settings.php` | System configuration (admin only) |
+The web pages were removed; `api.php` is the only browser-reachable script and speaks JSON only.
 
-**AI Assistant** — a floating chat button on every authenticated page. It uses GPT-4o via an OpenAI-compatible endpoint (`OPENAI_API_KEY`, `AI_BASE_URL`, `OPENAI_MODEL`) and answers questions about vehicles, LATRA submissions, events, the scheduler, automation buckets, logs and compliance by calling a fixed set of read-only tools (no arbitrary SQL/shell/actions, no secrets exposed). Conversations are stored per user in `ai_conversations` / `ai_chat_log`, rate-limited per user/IP (`AI_RATE_LIMIT`) and audited (`ai.chat` in the audit log). The model is told to treat all DB/log/user content as untrusted data. See `.env` for the full set of `AI_*` options.
+| Endpoint | Purpose |
+|----------|---------|
+| `POST /api.php?action=...` | Fleet, vehicle, activity, push/run log, audit, health, settings, user and data actions |
+
+Access is session + CSRF protected (`Auth::verifyCsrf`), with per-action write/rate-limit checks.
+There is no HTML dashboard, login form, settings page or AI chat surface; the assistant code was removed.
 
 ---
 
@@ -660,7 +637,6 @@ deleting pending/failed/unresolved rows**.
 | Streaming data | `MAINTAIN_STREAM_DAYS` | `14` | `message_log` (sent), `push_log`, `wialon_events`, `outbox` (sent), `webhook_events`, `rate_limits` |
 | Automation history | `MAINTAIN_RUN_DAYS` | `60` | `automation_runs`, `job_runs` |
 | Audit trail | `MAINTAIN_AUDIT_DAYS` | `365` | `audit_log` |
-| AI chat history | `MAINTAIN_AI_DAYS` | `180` | `ai_conversations`, `ai_chat_log` |
 | Log files | `CLEAN_LOG_DAYS` | `14` | `app-*.log`, `automation-*.log`, `*.old`, logs `.gz` |
 | Log rotation | `CLEAN_ROTATE_MB` / `CLEAN_KEEP_GZ` | `20` MB / `5` | `error.log`, `cron.log`, `cleanup.log`, `login.log` (gzip + truncate) |
 | Backups | `CLEAN_BACKUP_DAYS` / `CLEAN_GZIP_DAYS` | `14` / `3` | `backups/` retention + gzip old dumps |
@@ -691,18 +667,7 @@ latra-wialon-integration/
 ├── cron.php                    # Scheduler entry point (runs every minute)
 ├── database.sql                # Full schema dump
 │
-├── index.php                   # Dashboard
-├── login.php                   # Authentication
-├── vehicles.php                # Fleet list
-├── vehicle_detail.php          # Per-vehicle detail
-├── activities.php              # 24 LATRA activity definitions
-├── automation.php              # Bucket management
-├── run_logs.php                # Automation run history
-├── push_log.php                # LATRA submission audit
-├── latra_audit.php             # Compliance audit view
-├── health.php                  # Device health
-├── settings.php                # System configuration
-├── api.php                     # JSON API endpoints
+├── api.php                     # JSON API endpoints (only HTTP surface)
 │
 ├── includes/                   # Core service classes
 │   ├── Database.php            # PDO wrapper (singleton, auto-reconnect)
@@ -711,23 +676,16 @@ latra-wialon-integration/
 │   ├── Vault.php               # AES-256-CBC encrypted secrets
 │   ├── Logger.php              # Structured JSON-line logging
 │   ├── WialonAPI.php           # Wialon Remote API client
-│   ├── LatraAdapter.php        # LATRA HTTP client (circuit breaker)
 │   ├── LatraMapper.php         # Wialon → LATRA payload builder
-│   ├── IngestPipeline.php      # Message ingestion orchestrator
 │   ├── BucketRunner.php        # Per-bucket vehicle processor
-│   ├── EventDetector.php       # Activity classification (24 types)
 │   ├── EmergencyHandler.php    # Emergency event state machine
 │   ├── DeviceMonitor.php       # Device health tracking
 │   ├── GpsMonitor.php          # GPS health tracking
 │   ├── GpsValidator.php        # Payload validation
-│   ├── Normaliser.php          # Wialon → canonical format
 │   ├── ParamResolver.php       # Device parameter normalization
 │   ├── FleetSync.php           # Wialon fleet synchronization
-│   ├── Outbox.php              # Durable message queue
 │   ├── Scheduler.php           # Job scheduler (locks, ordering)
-│   ├── Automation.php          # Bucket/activity helpers
 │   ├── Webhooks.php            # Webhook delivery
-│   ├── Layout.php              # HTML layout/templates
 │   ├── DataCleaner.php         # Data sanitization
 │   └── LatraMapper.php         # LATRA payload builder
 │
@@ -771,20 +729,19 @@ latra-wialon-integration/
 [ ] 3. Copy project to web root
 [ ] 4. Create .env from .env.example
 [ ] 5. Set WIALON_TOKEN, LATRA_API_URL, LATRA_USERNAME, LATRA_PASSWORD
-[ ] 6. (Optional) Set OPENAI_API_KEY, AI_BASE_URL, OPENAI_MODEL for the AI Assistant
 [ ] 7. Create database: CREATE DATABASE latra_wialon
 [ ] 7. Run: php scripts/setup_admin.php admin <password>
 [ ] 8. Start Apache/XAMPP
-[ ] 9. Open http://localhost/latra-wialon-integration/login.php
-[ ] 10. Log in and verify dashboard loads
-[ ] 11. Run fleet sync (Settings or CLI)
+[ ] 9. Verify the API responds: curl -s -o /dev/null -w "%{http_code}" http://localhost/latra-wialon-integration/api.php
+[ ] 10. Authenticate and fetch a JSON action through api.php
+[ ] 11. Run fleet sync (CLI: bin/worker.php or php -r FleetSync::syncAll())
 [ ] 12. Create automation buckets for required activities
 [ ] 13. Assign vehicles to buckets
 [ ] 14. Enable all 24 activities per vehicle in activity_mappings
 [ ] 15. Set up cron: * * * * * /usr/bin/php .../cron.php
 [ ] 16. Verify cron runs: tail -f logs/cron.log
-[ ] 17. Check push_log for LATRA submissions
-[ ] 18. Verify data appears on LATRA dashboard
+[ ] 17. Check relay_pending and relay_units for collected/delivered state
+[ ] 18. Verify data appears on the LATRA side through the authorized relay path
 ```
 
 ---
