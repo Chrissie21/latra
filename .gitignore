@@ -52,3 +52,6 @@ bruno/**/environments/local.bru
 /vendor/
 /.phpstan-cache/
 /handoff.md
+
+# Local shared agent instructions
+/CLAUDE.md
