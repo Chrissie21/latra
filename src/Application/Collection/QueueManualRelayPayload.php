@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Latra\Application\Collection;
 
+use Latra\Domain\Collection\Vehicle;
 use Latra\Domain\Exception\InvalidSubmission;
 use Latra\Domain\Ingestion\LatraPayloadPolicy;
 
@@ -10,10 +11,11 @@ use Latra\Domain\Ingestion\LatraPayloadPolicy;
 final class QueueManualRelayPayload
 {
     public function __construct(private RelayWindowCollector $collector, private int $maxBytes) {}
-    public function queue(array $vehicle, array $payload, ?array $sourceEvidence=null): array
+    public function queue(Vehicle $vehicle, array $payload, ?array $sourceEvidence=null): array
     {
-        foreach(['vehicle_reg_no','imei'] as $identity) {
-            if(isset($payload[$identity]) && $payload[$identity]!=='' && ($payload[$identity]!==($vehicle[$identity]??null))) {
+        $identities = ['vehicle_reg_no' => $vehicle->vehicle_reg_no, 'imei' => $vehicle->imei];
+        foreach($identities as $identity => $expected) {
+            if(isset($payload[$identity]) && $payload[$identity]!=='' && ((string) $payload[$identity] !== (string) ($expected ?? ''))) {
                 throw new InvalidSubmission('Payload vehicle identity mismatch');
             }
         }
@@ -24,7 +26,10 @@ final class QueueManualRelayPayload
             ? intdiv((int)$timestamp,1000) : time();
         $raw=['t'=>$time,'payload'=>$payload];
         if($sourceEvidence!==null) $raw['source_evidence']=$sourceEvidence;
-        $stream = 'manual:wialon:' . $vehicle['wialon_unit_id'] . ':'
+        if ($vehicle->wialon_unit_id === null) {
+            throw new InvalidSubmission('Relay queue requires a Wialon unit identity');
+        }
+        $stream = 'manual:wialon:' . $vehicle->wialon_unit_id . ':'
             . substr(hash('sha256', json_encode($sourceEvidence===null ? $payload : [$payload,$sourceEvidence], JSON_THROW_ON_ERROR)), 0, 24);
         $result = $this->collector->collectWindow($stream, $time, $time, 1, 1, $this->maxBytes,
             static fn(): array => ['count'=>1,'messages'=>[$raw]],

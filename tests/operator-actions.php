@@ -8,6 +8,8 @@ use Latra\Application\Operations\OperatorActionRepository;
 use Latra\Application\Operations\PushActivityToVehicles;
 use Latra\Application\Operations\ReadSchedulerHealth;
 use Latra\Application\Operations\SubmitOperatorPayload;
+use Latra\Domain\Collection\Vehicle;
+use Latra\Infrastructure\Persistence\VehicleRowDecoder;
 
 final class MemoryOperatorActions implements OperatorActionRepository
 {
@@ -28,7 +30,10 @@ final class MemoryOperatorActions implements OperatorActionRepository
 
     public function messageForRelay(int $messageId): ?array { return $this->messages[$messageId] ?? null; }
     public function messageForSubmission(int $messageId): ?array { return $this->messages[$messageId] ?? null; }
-    public function vehicle(int $vehicleId): ?array { return $this->vehicles[$vehicleId] ?? null; }
+    public function vehicle(int $vehicleId): ?Vehicle {
+        $row = $this->vehicles[$vehicleId] ?? null;
+        return $row === null ? null : VehicleRowDecoder::decode($row);
+    }
     public function latestMessage(int $vehicleId): ?array { return $this->latest[$vehicleId] ?? null; }
     public function pushLog(int $id): ?array { return $this->pushLogs[$id] ?? null; }
     public function deletePushLog(int $id): void { $this->deleted[] = $id; }
@@ -60,12 +65,14 @@ function expectFailure(callable $work, string $message, string $why): void
 
 $repo = new MemoryOperatorActions();
 $queued = [];
-$builder = static fn(array $vehicle, array $source, int $activity, array $addon, array $fuel): array
-    => ['vehicle_reg_no' => $vehicle['vehicle_reg_no'], 'imei' => $vehicle['imei'],
+$identity = static fn(array|Vehicle $vehicle, string $field): ?string =>
+    $vehicle instanceof Vehicle ? $vehicle->{$field} : ($vehicle[$field] ?? null);
+$builder = static fn(array|Vehicle $vehicle, array $source, int $activity, array $addon, array $fuel): array
+    => ['vehicle_reg_no' => $identity($vehicle, 'vehicle_reg_no'), 'imei' => $identity($vehicle, 'imei'),
         'items' => [['activity_id' => (string) $activity, 'timestamp' => (string) ($source['wialon_msg_time'] * 1000)]]];
 $submit = new SubmitOperatorPayload($repo, $builder, static fn(array $payload): array => empty($payload['items']) ? ['items array is required'] : [],
-    static function (array $vehicle, array $payload) use (&$queued): array {
-        $queued[] = [$vehicle['id'], $payload['items'][0]['activity_id'] ?? null];
+    static function (Vehicle $vehicle, array $payload) use (&$queued): array {
+        $queued[] = [$vehicle->id, $payload['items'][0]['activity_id'] ?? null];
         return ['success' => true, 'queued' => 1, 'message' => 'Saved to the durable relay.'];
     });
 
@@ -87,11 +94,11 @@ expectFailure(static fn() => $submit->fromStoredPayload(8),
     'Stored payload is invalid JSON. Use Edit to rebuild it.', 'Invalid stored payload was accepted');
 
 $invalid = new SubmitOperatorPayload($repo, $builder, static fn(array $payload): array => ['items[0].timestamp is required'],
-    static fn(array $vehicle, array $payload): array => ['success' => true]);
+    static fn(Vehicle $vehicle, array $payload): array => ['success' => true]);
 assertSame(true,$invalid->fromCustomPayload(1,'{"items":[{"activity_id":"2"}]}')['review'], 'Required-field errors were not retained as review');
 
 $failing = new SubmitOperatorPayload($repo, $builder, static fn(array $payload): array => [],
-    static function (array $vehicle, array $payload): array {
+    static function (Vehicle $vehicle, array $payload): array {
         throw new \Latra\Domain\Exception\InvalidSubmission('identity mismatch');
     });
 assertSame(['success' => false, 'message' => 'identity mismatch'], $failing->fromCustomPayload(1, '{"items":[{"activity_id":"2"}]}'),
@@ -114,11 +121,12 @@ $bulk = new PushActivityToVehicles($repo, $builder,
     static fn(int $activity, array $params, array $custom): ?array => $custom ? ['trip' => true] : [],
     static fn(array $params): array => ['fuel' => true],
     static fn(int $vehicle, int $at): array => ['distance' => 1, 'at' => $at],
-    static function (array $vehicle, array $payload) use (&$queued): array {
-        $queued[] = [$vehicle['id'], $payload['items'][0]['activity_id'] ?? null];
+    static function (Vehicle $vehicle, array $payload) use (&$queued): array {
+        $queued[] = [$vehicle->id, $payload['items'][0]['activity_id'] ?? null];
         return ['success' => true, 'queued' => 1, 'message' => 'Saved to the durable relay.'];
     },
-    static fn(): int => 1700000200);
+    static fn(): int => 1700000200,
+    new \Latra\Infrastructure\Wialon\WialonSourceReader());
 $result = $bulk->run([1, 999], 2, static function (array $event) use (&$events): void { $events[] = $event; });
 assertSame(['success' => 1, 'failed' => 1], $result, 'Bulk submission counts changed');
 assertSame('init', $events[0]['type'], 'Bulk submission lost its init event');

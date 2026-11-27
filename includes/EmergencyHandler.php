@@ -1,5 +1,6 @@
 <?php
 /** Emergency event handler. */
+use Latra\Domain\Collection\Vehicle;
 use Latra\Domain\Emergency\EmergencyEventPolicy;
 use Latra\Infrastructure\Persistence\PdoEmergencyEventRepository;
 
@@ -29,7 +30,7 @@ class EmergencyHandler {
     public static function flushPending(array $event, int $vehicleId): array {
         $useCase = new \Latra\Application\Emergency\FlushPendingEmergencyReports(
             new \Latra\Infrastructure\Persistence\PdoEmergencyQueueRepository(Database::getInstance()),
-            static function (array $event, array $row, array $vehicle): array {
+            static function (array $event, array $row, Vehicle $vehicle): array {
                 $payload = LatraMapper::buildPayload($vehicle, [
                     'lat' => $row['lat'], 'lng' => $row['lng'], 'altitude' => $row['altitude'],
                     'speed' => $row['speed'], 'bearing' => $row['bearing'],

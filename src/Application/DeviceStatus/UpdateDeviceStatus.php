@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace Latra\Application\DeviceStatus;
 
+use Latra\Application\Ingestion\TelemetrySignalReader;
 use Latra\Domain\Ingestion\DeviceStatusPolicy;
 
 final class UpdateDeviceStatus
@@ -11,13 +12,14 @@ final class UpdateDeviceStatus
         private DeviceStatusRepository $repository,
         private DeviceStatusEffects $effects,
         private DeviceStatusClock $clock,
+        private TelemetrySignalReader $signals,
     ) {
     }
 
     public function execute(int $vehicleId, array $parameters, int $commTime): void
     {
         $previous = $this->repository->findByVehicleId($vehicleId);
-        $evaluation = DeviceStatusPolicy::evaluate($parameters, $previous ?? []);
+        $evaluation = DeviceStatusPolicy::evaluate($this->signals->readDeviceStatus($parameters), $previous ?? []);
         $status = [
             'is_online' => 1,
             'online_at' => $previous['online_at'] ?? $this->clock->now(),

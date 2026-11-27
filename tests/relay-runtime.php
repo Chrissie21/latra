@@ -11,6 +11,8 @@ if (getenv('LATRA_RELAY_TEST_ALLOW_RESET') !== '1'
     throw new RuntimeException('Explicit dedicated relay test database required');
 }
 require_once __DIR__ . '/../includes/autoload.php';
+use Latra\Domain\Collection\Vehicle;
+use Latra\Infrastructure\Persistence\VehicleRowDecoder;
 $db = new PDO($dsn, getenv('LATRA_RELAY_TEST_USER') ?: 'root', getenv('LATRA_RELAY_TEST_PASSWORD') ?: '',
     [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
 if ($db->query('SELECT DATABASE()')->fetchColumn() !== $match[1]) throw new RuntimeException('Wrong database');
@@ -71,7 +73,7 @@ class RuntimeSource extends WialonAPI {
         throw new RuntimeException('Unexpected request');
     }
 }
-$vehicle = Database::fetch('SELECT * FROM vehicles WHERE id=1');
+$vehicle = VehicleRowDecoder::decode(Database::fetch('SELECT * FROM vehicles WHERE id=1'));
 $now = time() - 120;
 $report = static fn(int $t, array $params = []): array => ['t' => $t,
     'pos' => ['x' => 39.2, 'y' => -6.8, 'z' => 10, 's' => 20, 'c' => 90, 'sc' => 8],
@@ -86,7 +88,7 @@ $otherPath = RelayRuntime::collect($vehicle, 180, 100, ':activity:1', [1], $sour
 expect($otherPath['inserted'] === 0 && $otherPath['skipped'] === 3,
     'Portal/poll and bucket paths queued the same source activity twice');
 echo "PASS actual coordinator collects complete pages without SQL-held network calls; replay skips exactly\n";
-$badVehicle = $vehicle; $badVehicle['imei'] = null;
+$badVehicle = VehicleRowDecoder::decode(array_replace((array) $vehicle, ['imei' => null]));
 $bad = RelayRuntime::collect($badVehicle, 180, 100, ':poll', [1], new RuntimeSource([$report($now + 3)], $db), $now + 3, $now + 3);
 $again = RelayRuntime::collect($badVehicle, 180, 100, ':poll', [1], new RuntimeSource([$report($now + 4)], $db), $now + 4, $now + 4);
 expect($bad['rejected'] === 1 && $again['rejected'] === 1 && $again['inserted'] === 0, 'Held-review totals leaked into per-run counts');
@@ -102,7 +104,10 @@ expect($replayRecovered['inserted'] === 0 && $replayRecovered['skipped'] === 2,
     'Recovered reports lost cross-stream activity identity');
 echo "PASS explicit recovery uses refreshed vehicle identity and preserves cross-stream deduplication\n";
 $disabled = new RuntimeSource([$report($now + 5)], $db);
-$notEnrolled = RelayRuntime::collect(Database::fetch('SELECT * FROM vehicles WHERE id=2'), 180, 100, ':poll', [1], $disabled, $now, $now + 2);
+$notEnrolled = RelayRuntime::collect(
+    VehicleRowDecoder::decode(Database::fetch('SELECT * FROM vehicles WHERE id=2')),
+    180, 100, ':poll', [1], $disabled, $now, $now + 2,
+);
 expect($notEnrolled === ['fetched'=>0,'queued'=>0,'inserted'=>0,'rejected'=>0,'skipped'=>0],
     'Unenrolled vehicle did not return the deliberate non-fatal skip result');
 expect($disabled->logins === 0, 'Unenrolled vehicle reached Wialon');
@@ -141,7 +146,8 @@ echo "PASS one vehicle capacity budget covers all collection streams\n";
 $db->exec('UPDATE relay_vehicle_settings SET max_pending_records=100 WHERE vehicle_id=1');
 $invalid=$report($now+11);$invalid['pos']['y']=null;
 $bucketSource=new RuntimeSource([$report($now+10),$invalid],$db);
-$bucket=RelayRuntime::bucket(['id'=>1,'activity_id'=>1,'max_run_seconds'=>30,'max_items_per_run'=>100],static fn(array $v):WialonAPI=>$bucketSource);
+$bucket=RelayRuntime::bucket(['id'=>1,'activity_id'=>1,'max_run_seconds'=>30,'max_items_per_run'=>100],
+    static fn(Vehicle $v):WialonAPI=>$bucketSource);
 expect($bucket['fetched']===2 && $bucket['inserted']===1 && ($bucket['rejected']??null)===1 && ($bucket['queued']??null)===2,
     'Scheduled bucket hid source/review counts or bypassed coordinator');
 $invalidRecovery = RelayRuntime::recoverReviews($vehicle);

@@ -32,12 +32,12 @@ final class RelayIdentityPolicy
      * fields are accepted; present ones must match verbatim (string-compared,
      * as the legacy SQL-backed check was).
      */
-    public static function assertOwns(array $vehicle, array $payload): void
+    public static function assertOwns(Vehicle $vehicle, array $payload): void
     {
         $vehicleReg = $payload['vehicle_reg_no'] ?? null;
         $imei = $payload['imei'] ?? null;
-        if (($vehicleReg !== null && $vehicleReg !== '' && (string) $vehicleReg !== (string) ($vehicle['vehicle_reg_no'] ?? ''))
-            || ($imei !== null && $imei !== '' && (string) $imei !== (string) ($vehicle['imei'] ?? ''))
+        if (($vehicleReg !== null && $vehicleReg !== '' && (string) $vehicleReg !== (string) ($vehicle->vehicle_reg_no ?? ''))
+            || ($imei !== null && $imei !== '' && (string) $imei !== (string) ($vehicle->imei ?? ''))
         ) {
             throw new InvalidSubmission('Relay payload identity does not match the owning vehicle');
         }

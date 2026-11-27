@@ -4,7 +4,7 @@ namespace Latra\Infrastructure\Simulation;
 
 use Latra\Infrastructure\Wialon\WialonApiClient;
 use Latra\Infrastructure\Wialon\CurlWialonTransport;
-use Latra\Domain\Ingestion\LatraPayloadPolicy;
+use Latra\Infrastructure\Wialon\WialonSourceReader;
 use RuntimeException;
 
 /** Read only one bounded current window; never boots the app or opens its database. */
@@ -37,7 +37,7 @@ final class WialonCapture
             if ($unit === null) throw new RuntimeException('Requested Wialon unit not found');
             $to = time(); $from = $to - $seconds;
             $messages = $client->getCompleteWindow((int) $unit['id'], $from, $to, 100, 2000, 2097152);
-            $vehicle = LatraPayloadPolicy::mapVehicle($unit);
+            $vehicle = (new WialonSourceReader())->unitFields($unit);
             $vehicle = array_intersect_key($vehicle, array_flip(['wialon_unit_id','vehicle_reg_no','imei','hw_type']));
             $vehicle['id'] = 1; // local simulation identity only, never an owner DB id
             return ['source'=>'live-wialon', 'captured_at'=>gmdate('c'), 'from'=>$from, 'to'=>$to,

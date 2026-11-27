@@ -5,6 +5,9 @@ namespace Latra\Infrastructure\Simulation;
 use Latra\Application\Collection\RelayPayloadMapper;
 use Latra\Domain\Delivery\VtsBatchPolicy;
 use Latra\Infrastructure\Delivery\LoopbackRelayTransport;
+use Latra\Infrastructure\Persistence\VehicleRowDecoder;
+use Latra\Infrastructure\Wialon\WialonSignalReader;
+use Latra\Infrastructure\Wialon\WialonSourceReader;
 use RuntimeException;
 
 /** Isolated test harness: real mapper + HTTP, with inspectable file outbox and no app database. */
@@ -45,8 +48,9 @@ final class SimulationCommand
             throw new RuntimeException('Capture requires vehicle and bounded messages array');
         }
         $write('source.json', $capture);
-        $mapper = new RelayPayloadMapper($capture['vehicle'], array_fill_keys(range(1,24),true), range(1,24),
-            (float) ($options['speed-limit'] ?? 80), 2, 3200, (string) ($options['profile'] ?? 'generic'));
+        $mapper = new RelayPayloadMapper(VehicleRowDecoder::decode($capture['vehicle']), array_fill_keys(range(1,24),true), range(1,24),
+            (float) ($options['speed-limit'] ?? 80), 2, 3200, (string) ($options['profile'] ?? 'generic'),
+            new WialonSignalReader(), new WialonSourceReader());
         $messages = $capture['messages'];
         usort($messages, static fn($a,$b)=>($a['t']??0)<=>($b['t']??0));
         $state = []; $reports = []; $review = []; $nextId = 1;

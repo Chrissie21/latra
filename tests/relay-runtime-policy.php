@@ -5,6 +5,7 @@ require_once __DIR__ . '/../includes/autoload.php';
 
 use Latra\Domain\Collection\RelayDeliveryGatePolicy;
 use Latra\Domain\Collection\RelayIdentityPolicy;
+use Latra\Domain\Collection\Vehicle;
 use Latra\Domain\Exception\InvalidSubmission;
 
 function relayPolicyExpect(bool $condition, string $message): void {
@@ -41,15 +42,15 @@ relayPolicyExpect(RelayIdentityPolicy::unitVehicleId('wialon:0') === 0, 'Zero un
 // ---------------------------------------------------------------------------
 // Vehicle ownership
 // ---------------------------------------------------------------------------
-$vehicle = ['id' => 5, 'vehicle_reg_no' => 'T123ABC', 'imei' => '123456789012345'];
+$vehicle = new Vehicle(id: 5, vehicle_reg_no: 'T123ABC', imei: '123456789012345');
 RelayIdentityPolicy::assertOwns($vehicle, []);
 RelayIdentityPolicy::assertOwns($vehicle, ['vehicle_reg_no' => 'T123ABC']);
 RelayIdentityPolicy::assertOwns($vehicle, ['imei' => '123456789012345']);
 RelayIdentityPolicy::assertOwns($vehicle, ['vehicle_reg_no' => 'T123ABC', 'imei' => '123456789012345']);
 RelayIdentityPolicy::assertOwns($vehicle, ['vehicle_reg_no' => null, 'imei' => null]);
 // SQL-compatible comparison: the legacy check cast both sides to string.
-RelayIdentityPolicy::assertOwns(['id' => 5, 'vehicle_reg_no' => 123, 'imei' => 987654321], ['vehicle_reg_no' => '123']);
-RelayIdentityPolicy::assertOwns(['id' => 5], ['imei' => '']);
+RelayIdentityPolicy::assertOwns(new Vehicle(id: 5, vehicle_reg_no: '123', imei: '987654321'), ['vehicle_reg_no' => '123']);
+RelayIdentityPolicy::assertOwns(new Vehicle(id: 5), ['imei' => '']);
 relayPolicyRejects(
     fn() => RelayIdentityPolicy::assertOwns($vehicle, ['vehicle_reg_no' => 'T999ZZZ']),
     'Relay payload identity does not match the owning vehicle',
@@ -61,7 +62,7 @@ relayPolicyRejects(
     InvalidSubmission::class,
 );
 relayPolicyRejects(
-    fn() => RelayIdentityPolicy::assertOwns(['id' => 5, 'imei' => null], ['imei' => '123']),
+    fn() => RelayIdentityPolicy::assertOwns(new Vehicle(id: 5, imei: null), ['imei' => '123']),
     'Relay payload identity does not match the owning vehicle',
     InvalidSubmission::class,
 );

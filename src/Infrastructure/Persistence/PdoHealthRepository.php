@@ -7,7 +7,9 @@ use PDO;
 final class PdoHealthRepository implements HealthRepository
 {
     public function __construct(private PDO $pdo) {}
-    public function activeVehicles(): array { return $this->pdo->query('SELECT id FROM vehicles WHERE is_active = 1')->fetchAll(PDO::FETCH_ASSOC); }
+    public function activeVehicles(): array {
+        return VehicleRowDecoder::rows($this->pdo->query('SELECT id FROM vehicles WHERE is_active = 1')->fetchAll(PDO::FETCH_ASSOC));
+    }
     public function lastGpsTime(int $vehicleId): ?int
     {
         $stmt=$this->pdo->prepare('SELECT MAX(wialon_msg_time) AS t FROM message_log WHERE vehicle_id = ?');

@@ -18,14 +18,17 @@ use RuntimeException;
 final class SyncFleetVehicles
 {
     private Closure $log;
+    private Closure $decodeUnit;
 
     public function __construct(
         private FleetUnitSource $source,
         private FleetRepository $repository,
         private FleetSyncClock $clock,
         callable $log,
+        callable $decodeUnit,
     ) {
         $this->log = Closure::fromCallable($log);
+        $this->decodeUnit = Closure::fromCallable($decodeUnit);
     }
 
     /** @return array{synced:int,updated:int} */
@@ -40,19 +43,25 @@ final class SyncFleetVehicles
         try {
             foreach ($this->source->units() as $unit) {
                 $unitId = (int) ($unit['id'] ?? 0);
-                $row = FleetSyncPolicy::vehicleRow(
-                    $unit,
+                $mapped = FleetSyncPolicy::vehicle(
+                    ($this->decodeUnit)($unit),
                     $this->clock->now(),
                     $this->source->engineSensorParam($unitId),
                 );
+                if ($mapped->wialon_unit_id === null) {
+                    throw new RuntimeException('Wialon unit has no identity');
+                }
 
-                $existing = $this->repository->findByUnitId((int) $row['wialon_unit_id']);
+                $existing = $this->repository->findByUnitId($mapped->wialon_unit_id);
                 if ($existing) {
-                    $vehicleId = (int) $existing['id'];
-                    $this->repository->update($vehicleId, $row);
+                    if ($existing->id === null) {
+                        throw new RuntimeException('Existing vehicle has no local id');
+                    }
+                    $vehicleId = $existing->id;
+                    $this->repository->update($existing->withSynced($mapped));
                     $updated++;
                 } else {
-                    $vehicleId = $this->repository->insert($row);
+                    $vehicleId = $this->repository->insert($mapped);
                     $synced++;
                 }
                 $this->repository->seedActivityMappings($vehicleId);
@@ -78,14 +87,18 @@ final class SyncFleetVehicles
         }
 
         try {
-            $unitId = (int) $vehicle['wialon_unit_id'];
+            $unitId = $vehicle->wialon_unit_id;
+            if ($unitId === null) {
+                return;
+            }
             $unit = $this->source->unit($unitId);
             if ($unit) {
-                $this->repository->update($vehicleId, FleetSyncPolicy::vehicleRow(
-                    $unit,
+                $mapped = FleetSyncPolicy::vehicle(
+                    ($this->decodeUnit)($unit),
                     $this->clock->now(),
                     $this->source->engineSensorParam($unitId),
-                ));
+                );
+                $this->repository->update($vehicle->withSynced($mapped));
             }
         } finally {
             $this->source->close();

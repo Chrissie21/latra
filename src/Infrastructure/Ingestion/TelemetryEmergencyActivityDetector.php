@@ -7,6 +7,7 @@ use Latra\Application\Emergency\EmergencyActivityDetector;
 use Latra\Domain\Emergency\EmergencyEventPolicy;
 use Latra\Domain\Ingestion\ActivityDetectionPolicy;
 use Latra\Infrastructure\Persistence\PdoIngestionSettingsRepository;
+use Latra\Infrastructure\Wialon\WialonSignalReader;
 
 /**
  * Re-detects an emergency condition from a raw fetched source message. It uses the
@@ -15,16 +16,23 @@ use Latra\Infrastructure\Persistence\PdoIngestionSettingsRepository;
  */
 final class TelemetryEmergencyActivityDetector implements EmergencyActivityDetector
 {
-    public function __construct(private PdoIngestionSettingsRepository $settings) {}
+    private WialonSignalReader $signals;
+
+    public function __construct(private PdoIngestionSettingsRepository $settings,
+        ?WialonSignalReader $signals = null) {
+        $this->signals = $signals ?? new WialonSignalReader();
+    }
 
     public function isEmergency(int $vehicleId, array $message): bool
     {
         $speed = isset($message['pos']['s']) ? round((float) $message['pos']['s'], 2) : 0.0;
-        $detected = ActivityDetectionPolicy::detect($message['p'] ?? [], [], [
-            'speed' => $speed,
-            'activity_enabled' => [],
-            'speed_limit' => $this->settings->speedLimit($vehicleId),
-        ]);
+        $detected = ActivityDetectionPolicy::detect(
+            $this->signals->readSource($message['p'] ?? [], null, $speed), [], [
+                'speed' => $speed,
+                'activity_enabled' => [],
+                'speed_limit' => $this->settings->speedLimit($vehicleId),
+            ]
+        );
 
         return EmergencyEventPolicy::isEmergencyActivity((int) $detected['activity_id']);
     }

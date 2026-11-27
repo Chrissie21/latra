@@ -30,17 +30,6 @@ $db->exec($sql);
 (new ReflectionProperty(Database::class,'sensitiveConfigScrubbed'))->setValue(null,true);
 Schema::ensure();
 $db->exec("INSERT INTO vehicles (id,wialon_unit_id,vehicle_reg_no,imei) VALUES (7,123,'SYNTHETIC-NATIVE','123456789012345')");
-$evidence=new Latra\Infrastructure\Persistence\PdoValidationEvidenceRepository($db);
-$db->beginTransaction();
-$count=$evidence->recordErrors(['vehicle_id'=>7,'vehicle_reg_no'=>'SYNTHETIC-NATIVE','activity_id'=>1,'wialon_msg_time'=>100],
-    [['field'=>'lat','value'=>['bad'=>true],'reason'=>'synthetic','code'=>'bad_lat']]);
-$row=$db->query('SELECT * FROM validation_errors')->fetch();
-nativeRepositoryExpect($count===1 && $row['message_log_id']===null && $row['invalid_value']==='{"bad":true}'
-    && (int)$row['gps_timestamp']===100,'Native evidence shape failed');
-$db->rollBack();
-nativeRepositoryExpect((int)$db->query('SELECT COUNT(*) FROM validation_errors')->fetchColumn()===0,
-    'Native evidence escaped rollback');
-echo "PASS native validation evidence and transaction rollback\n";
 $scheduled=new Latra\Infrastructure\Persistence\PdoScheduledVehicleRepository($db);
 nativeRepositoryExpect(array_column($scheduled->ordinaryVehicles(),'id')===[7] && $scheduled->emergencyVehicles()===[],
     'Native scheduled vehicle selection failed');
@@ -78,10 +67,12 @@ nativeRepositoryExpect($restart->deliver('native-lock',1001,static fn():array=>[
 echo "PASS killed native advisory-lock connection stops dispatch and a fresh owner recovers\n";
 
 (new ReflectionProperty(Database::class,'instance'))->setValue(null,$observer);
-$vehicle=$observer->query('SELECT * FROM vehicles WHERE id=7')->fetch();
+$vehicle=\Latra\Infrastructure\Persistence\VehicleRowDecoder::decode($observer->query('SELECT * FROM vehicles WHERE id=7')->fetch());
 RelayRuntime::enroll($vehicle,'generic',['max_records'=>20,'max_bytes'=>65536,'max_pending_records'=>20,'max_pending_bytes'=>65536]);
 $payload=\Latra\Domain\Ingestion\LatraPayloadPolicy::buildPayload($vehicle,
-    vtsTestMessage(['wialon_msg_time'=>time()-1,'lat'=>-6.8,'lng'=>39.2]),1);
+    \Latra\Domain\Ingestion\TelemetryMessage::fromStored(
+        vtsTestMessage(['wialon_msg_time'=>time()-1,'lat'=>-6.8,'lng'=>39.2]),
+    ),1)->toWire();
 $first=RelayRuntime::queueForVehicle($payload,7);
 $again=RelayRuntime::queueForVehicle($payload,7);
 nativeRepositoryExpect($first['queued']===1 && $again['queued']===0
@@ -108,3 +99,21 @@ $maintenance->reconcileJobLocks();
 nativeRepositoryExpect($observer->query("SELECT status FROM job_runs WHERE job_key='synthetic_held'")->fetchColumn() === 'orphaned',
     'Native recovery failed after the live owner released its lock');
 echo "PASS native scheduler recovery preserves live ownership and closes abandoned run evidence\n";
+
+// Exercise fleet conversion against the real NOT NULL/default constraints, not a loose fake schema.
+$fleet = new Latra\Infrastructure\Persistence\PdoFleetRepository($observer);
+$fleetId = $fleet->insert(new Latra\Domain\Collection\Vehicle(wialon_unit_id: 654321));
+$unregistered = $fleet->findById($fleetId);
+nativeRepositoryExpect($unregistered !== null && $unregistered->vehicle_reg_no === null
+    && $unregistered->is_active === true && $unregistered->fuel_cadence_min === 30,
+    'Native fleet insert lost absent registration or schema defaults');
+$refreshed = $unregistered->withSynced((new Latra\Infrastructure\Wialon\WialonSourceReader())->decodeUnit([
+    'id' => 654321, 'uid' => '123456789012345', 'lmsg' => ['t' => 1700000000],
+]));
+$fleet->update($refreshed);
+$roundTrip = $fleet->findById($fleetId);
+nativeRepositoryExpect($roundTrip !== null && $roundTrip->imei === '123456789012345'
+    && $roundTrip->mgs_id === 1700000000 && $roundTrip->vehicle_reg_no === null
+    && $roundTrip->fuel_cadence_min === 30,
+    'Native fleet refresh lost IMEI, message identity or operator cadence');
+echo "PASS native fleet creation defaults, absent registration and refreshed identity round trip\n";

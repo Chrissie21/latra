@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Latra\Application\Emergency;
 
 use Closure;
+use Latra\Domain\Collection\Vehicle;
 use Latra\Domain\Emergency\EmergencyHandoffStatus;
 
 final class FlushPendingEmergencyReports
@@ -23,7 +24,7 @@ final class FlushPendingEmergencyReports
     public function flush(array $event, int $vehicleId): array
     {
         $rows = $this->repository->pendingForEvent((string) $event['event_id']);
-        $vehicle = $this->repository->vehicleById($vehicleId) ?? [];
+        $vehicle = $this->repository->vehicleById($vehicleId) ?? new Vehicle();
         $counts = ['submitted' => 0, 'queued' => 0, 'failed' => 0, 'skipped' => 0];
 
         foreach ($rows as $row) {

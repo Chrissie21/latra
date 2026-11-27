@@ -18,17 +18,17 @@ final class ReadDeviceSnapshot
             $latest = $this->repository->latestMessageWithIdentity($vehicleId);
             $snapshot = [
                 'vehicle' => [
-                    'id' => (int) $vehicle['id'],
-                    'vehicle_reg_no' => $vehicle['vehicle_reg_no'],
-                    'name' => $vehicle['name'] ?? '',
-                    'imei' => $vehicle['imei'] ?? '',
-                    'hw_type' => $vehicle['hw_type'] ?? '',
-                    'phone' => $vehicle['phone'] ?? '',
-                    'speed_limit_kmh' => isset($vehicle['speed_limit_kmh']) ? (float) $vehicle['speed_limit_kmh'] : null,
-                    'odometer' => isset($vehicle['odometer']) ? (float) $vehicle['odometer'] : null,
-                    'last_message_time' => isset($vehicle['last_message_time']) && $vehicle['last_message_time'] ? (int) $vehicle['last_message_time'] : null,
-                    'is_active' => (bool) $vehicle['is_active'],
-                    'last_sync_at' => $vehicle['last_sync_at'] ?? null,
+                    'id' => $vehicle->id,
+                    'vehicle_reg_no' => $vehicle->vehicle_reg_no,
+                    'name' => $vehicle->name ?? '',
+                    'imei' => $vehicle->imei ?? '',
+                    'hw_type' => $vehicle->hw_type ?? '',
+                    'phone' => $vehicle->phone ?? '',
+                    'speed_limit_kmh' => $vehicle->speed_limit_kmh,
+                    'odometer' => $vehicle->odometer,
+                    'last_message_time' => $vehicle->last_message_time ?: null,
+                    'is_active' => (bool) $vehicle->is_active,
+                    'last_sync_at' => $vehicle->last_sync_at,
                 ],
                 'device' => $device
                     ? [

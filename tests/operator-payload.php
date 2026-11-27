@@ -4,10 +4,15 @@ require __DIR__.'/../includes/autoload.php';
 use Latra\Application\Operations\OperatorPayloadRepository;
 use Latra\Application\Operations\LatestVehicleSource;
 use Latra\Application\Operations\BuildOperatorPayload;
+use Latra\Domain\Collection\Vehicle;
+use Latra\Infrastructure\Persistence\VehicleRowDecoder;
+use Latra\Infrastructure\Wialon\WialonSourceReader;
 function payloadAssert(bool $ok,string $why): void { if (!$ok) throw new RuntimeException($why); }
 $repo=new class implements OperatorPayloadRepository {
     public ?array $latest=['id'=>1,'wialon_msg_time'=>2000000000,'lat'=>-6.8,'lng'=>39.2,'speed'=>0,'raw_data'=>'{}'];
-    public function vehicle(int $id): ?array { return $id===1 ? ['id'=>1,'wialon_unit_id'=>123,'vehicle_reg_no'=>'SYNTHETIC','imei'=>'123456789012345'] : null; }
+    public function vehicle(int $id): ?Vehicle {
+        return $id===1 ? VehicleRowDecoder::decode(['id'=>1,'wialon_unit_id'=>123,'vehicle_reg_no'=>'SYNTHETIC','imei'=>'123456789012345']) : null;
+    }
     public function latestMessage(int $id): ?array { return $this->latest; }
     public function recentMessages(int $id,int $limit): array { return $this->latest ? [$this->latest] : []; }
 };
@@ -19,7 +24,7 @@ $source=new class implements LatestVehicleSource {
         return ['unit'=>null,'message'=>['t'=>1999998000,'pos'=>['x'=>39.2,'y'=>-6.8,'s'=>0],'p'=>[]]];
     }
 };
-$work=new BuildOperatorPayload($repo,$source,static fn(int $id,int $at): array => [],static fn(): int => 2000000000);
+$work=new BuildOperatorPayload($repo,$source,static fn(int $id,int $at): array => [],static fn(): int => 2000000000,new WialonSourceReader());
 $result=$work->build(1,2,'single');
 payloadAssert($result['meta']===['source'=>'stored','source_time'=>2000000000,'is_recent'=>true] && $source->calls===0, 'Fresh stored source triggered a live fetch or lost provenance');
 $repo->latest['wialon_msg_time']=1999900000;

@@ -4,10 +4,13 @@ require_once __DIR__.'/vts-fixtures.php';
 require __DIR__ . '/../includes/autoload.php';
 require __DIR__ . '/latra-idd.php';
 use Latra\Application\Collection\RelayPayloadMapper;
+use Latra\Domain\Collection\Vehicle;
+use Latra\Infrastructure\Wialon\WialonSignalReader;
+use Latra\Infrastructure\Wialon\WialonSourceReader;
 
 function verify(bool $ok, string $why): void { if (!$ok) throw new RuntimeException($why); }
-$vehicle = ['id'=>1, 'imei'=>'123456789012345', 'vehicle_reg_no'=>'SYNTHETIC', 'engine_param'=>'ignition'];
-$mapper = new RelayPayloadMapper($vehicle, array_fill_keys(range(1,24), true), range(1,24), 80, 1, 3200, 'generic');
+$vehicle = new Vehicle(id: 1, imei: '123456789012345', vehicle_reg_no: 'SYNTHETIC', engine_param: 'ignition');
+$mapper = new RelayPayloadMapper($vehicle, array_fill_keys(range(1,24), true), range(1,24), 80, 1, 3200, 'generic', new WialonSignalReader(), new WialonSourceReader());
 $events = [1=>'', 2=>'engine_on', 3=>'engine_off', 4=>'speeding', 5=>'harsh_braking', 6=>'harsh_turning',
     7=>'harsh_acceleration', 8=>'panic', 9=>'battery_low', 10=>'power_disconnected', 11=>'excessive_idle',
     12=>'accident', 13=>'passenger_panic', 14=>'tamper', 15=>'black_box', 16=>'fuel', 17=>'invalid_scan',

@@ -17,7 +17,10 @@ final class RefreshGpsHealth
         $now = ($this->now)();
         $counts = GpsHealthPolicy::emptyCounts();
         foreach ($vehicles as $vehicle) {
-            $id = (int)$vehicle['id'];
+            if ($vehicle->id === null) {
+                continue;
+            }
+            $id = $vehicle->id;
             $lastGps = $this->repository->lastGpsTime($id);
             $health = GpsHealthPolicy::classify($lastGps, $now);
             $counts[$health['status']]++;

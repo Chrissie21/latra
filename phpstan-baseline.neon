@@ -43,12 +43,6 @@ parameters:
 			path: includes/WialonAPI.php
 
 		-
-			message: '#^Strict comparison using \!\=\= between mixed and null will always evaluate to true\.$#'
-			identifier: notIdentical.alwaysTrue
-			count: 1
-			path: src/Application/Collection/RelayPayloadMapper.php
-
-		-
 			message: '#^Call to function in_array\(\) with arguments 0, array\{5, 7\} and true will always evaluate to false\.$#'
 			identifier: function.impossibleType
 			count: 1

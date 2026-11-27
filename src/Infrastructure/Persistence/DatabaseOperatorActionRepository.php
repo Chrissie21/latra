@@ -26,9 +26,10 @@ final class DatabaseOperatorActionRepository implements OperatorActionRepository
         );
     }
 
-    public function vehicle(int $vehicleId): ?array
+    public function vehicle(int $vehicleId): ?\Latra\Domain\Collection\Vehicle
     {
-        return \Database::fetch('SELECT * FROM vehicles WHERE id = ?', [$vehicleId]);
+        $row = \Database::fetch('SELECT * FROM vehicles WHERE id = ?', [$vehicleId]);
+        return $row === null ? null : VehicleRowDecoder::decode($row);
     }
 
     public function latestMessage(int $vehicleId): ?array

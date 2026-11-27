@@ -51,11 +51,11 @@ final class FetchOperatorMessages
             try {
                 $collected = ($this->poll)($vehicle, 86400, 100);
                 $progress(['type' => 'progress', 'current' => $index + 1, 'total' => $total,
-                    'vehicle' => $vehicle['vehicle_reg_no'], 'status' => 'ok'] + $collected);
+                    'vehicle' => $vehicle->vehicle_reg_no, 'status' => 'ok'] + $collected);
                 $success++;
             } catch (Throwable $error) {
                 $progress(['type' => 'progress', 'current' => $index + 1, 'total' => $total,
-                    'vehicle' => $vehicle['vehicle_reg_no'], 'inserted' => 0, 'status' => 'fail']);
+                    'vehicle' => $vehicle->vehicle_reg_no, 'inserted' => 0, 'status' => 'fail']);
                 $failed++;
             }
         }

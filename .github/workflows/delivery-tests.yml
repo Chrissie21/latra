@@ -87,14 +87,16 @@ jobs:
           coverage: none
       - name: Verify isolated ingestion application orchestration
         run: |
-          php tests/ingestion-validation-evidence.php
           php tests/ingestion-trip-stats.php
           php tests/ingestion-device-status.php
+          php tests/telemetry-signals.php
           php tests/emergency-events.php
           php tests/ingestion-domain-policies.php
+          php tests/source-envelope.php
           php tests/scheduled-poll.php
           php tests/wialon-window.php
           php tests/fleet-sync.php
+          php tests/typed-vehicle-boundary.php
           php tests/relay-runtime-policy.php
           php tests/scheduling.php
           php tests/scheduled-job-dispatch.php

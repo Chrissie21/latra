@@ -4,7 +4,7 @@ declare(strict_types=1);
 namespace Latra\Application\Operations;
 
 use Closure;
-use Latra\Domain\Collection\OperatorPayloadPolicy;
+use Latra\Application\Ingestion\TelemetryMessageReader;
 use Latra\Domain\Ingestion\LatraPayloadPolicy;
 use RuntimeException;
 use Throwable;
@@ -26,7 +26,8 @@ final class PushActivityToVehicles
 
     public function __construct(private OperatorActionRepository $repository,
         callable $payloadBuilder, callable $addonBuilder, callable $fuelBuilder,
-        callable $tripBuilder, callable $queue, callable $now)
+        callable $tripBuilder, callable $queue, callable $now,
+        private TelemetryMessageReader $decoder)
     {
         $this->payloadBuilder = Closure::fromCallable($payloadBuilder);
         $this->addonBuilder = Closure::fromCallable($addonBuilder);
@@ -58,12 +59,12 @@ final class PushActivityToVehicles
                 $latest = $this->repository->latestMessage((int) $vehicleId);
                 $result = $this->submit($vehicle, $latest ?: [], $latest ?: null, $activityId);
                 $progress(['type' => 'progress', 'current' => $index + 1, 'total' => $total,
-                    'vehicle' => $vehicle['vehicle_reg_no'], 'latra_status' => ($result['success'] ?? false) ? 'queued' : 'fail',
+                    'vehicle' => $vehicle->vehicle_reg_no, 'latra_status' => ($result['success'] ?? false) ? 'queued' : 'fail',
                     'message' => $result['message'] ?? 'Saved to the durable relay. Real LATRA delivery is blocked.']);
                 if (($result['success'] ?? false)) $success++; else $failed++;
             } catch (Throwable $error) {
                 $progress(['type' => 'progress', 'current' => $index + 1, 'total' => $total,
-                    'vehicle' => $vehicle['vehicle_reg_no'], 'latra_status' => 'fail']);
+                    'vehicle' => $vehicle->vehicle_reg_no, 'latra_status' => 'fail']);
                 $failed++;
             }
         }
@@ -72,14 +73,14 @@ final class PushActivityToVehicles
         return ['success' => $success, 'failed' => $failed];
     }
 
-    private function submit(array $vehicle, array $source, ?array $latest, int $activityId): array
+    private function submit(\Latra\Domain\Collection\Vehicle $vehicle, array $source, ?array $latest, int $activityId): array
     {
         $custom = [];
         if ($activityId === LatraPayloadPolicy::ACTIVITY_ENGINE_OFF) {
-            $custom = ($this->tripBuilder)((int) $vehicle['id'],
+            $custom = ($this->tripBuilder)((int) ($vehicle->id ?? 0),
                 (int) ($source['wialon_msg_time'] ?? ($this->now)()));
         }
-        $params = $latest ? OperatorPayloadPolicy::parameters($latest) : [];
+        $params = $latest ? $this->decoder->decodeStoredParameters($latest) : [];
         $addon = ($this->addonBuilder)($activityId, $params, $custom) ?? [];
         $fuel = $activityId === LatraPayloadPolicy::ACTIVITY_FUEL_REPORT
             ? ($this->fuelBuilder)($params) : [];

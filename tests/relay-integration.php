@@ -10,6 +10,9 @@ if (getenv('LATRA_RELAY_TEST_ALLOW_RESET') !== '1'
 const DATE_FORMAT = 'Y-m-d H:i:s';
 require_once __DIR__ . '/../includes/autoload.php';
 use Latra\Application\Collection\RelayPayloadMapper as RelayMapper;
+use Latra\Domain\Collection\Vehicle;
+use Latra\Infrastructure\Wialon\WialonSignalReader;
+use Latra\Infrastructure\Wialon\WialonSourceReader;
 $db = new PDO($dsn, getenv('LATRA_RELAY_TEST_USER') ?: 'root', getenv('LATRA_RELAY_TEST_PASSWORD') ?: '',
     [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC]);
 if ($db->query('SELECT DATABASE()')->fetchColumn() !== $match[1]) throw new RuntimeException('Wrong database');
@@ -35,14 +38,15 @@ class PagedWialon extends WialonAPI {
         };
     }
 }
-$vehicle = ['id' => 1, 'wialon_unit_id' => 123, 'imei' => '123456789012345', 'vehicle_reg_no' => 'SYNTHETIC', 'engine_param' => 'io_239'];
-$mapper = new RelayMapper($vehicle, array_fill_keys(range(1, 24), true), range(1, 24), 80, 2, 3200, 'teltonika-fmb');
+$vehicle = new Vehicle(id: 1, wialon_unit_id: 123, imei: '123456789012345',
+    vehicle_reg_no: 'SYNTHETIC', engine_param: 'io_239');
+$mapper = new RelayMapper($vehicle, array_fill_keys(range(1, 24), true), range(1, 24), 80, 2, 3200, 'teltonika-fmb', new WialonSignalReader(), new WialonSourceReader());
 $now = time() - 60;
 $raw = static fn(int $t, array $p): array => ['t' => $t, 'pos' => ['x' => 39.2, 'y' => -6.8, 's' => 20, 'c' => 90, 'z' => 10, 'sc' => 8], 'p' => vtsTestParams($p + ['io_66'=>12500,'io_67'=>4100])];
 $source = new PagedWialon([$raw($now, ['io_239' => 0]), $raw($now + 1, ['io_239' => 1]),
     $raw($now + 1, ['io_253' => 2]), $raw($now + 2, ['io_239' => 0])]);
 $relay = new DurableRelay($db, 8, static fn(int $n): int => 5, 100, 1048576);
-expect(FleetSync::collectRelayVehicle($vehicle, $relay, $mapper, $now, $now + 2, 2, 10, 16384, $source) === 4, 'Application collection lost reports');
+expect(FleetSync::collectRelayWindow($vehicle, $relay, $mapper, $now, $now + 2, 2, 10, 16384, $source)['queued'] === 4, 'Application collection lost reports');
 expect($source->closed && $source->unloaded, 'Source session/loader leaked');
 expect($relay->status('wialon:123')['queue']['review'] == 0, 'Valid application mapping entered review');
 $bodies = $db->query('SELECT payload FROM relay_pending ORDER BY id')->fetchAll(PDO::FETCH_COLUMN);
@@ -53,19 +57,19 @@ foreach ($bodies as $body) foreach (json_decode($body, true)['items'] as $item) 
 expect(count(array_unique($allIds)) === count($allIds), 'Simultaneous/same-second MGS_ID collision');
 expect(in_array(2, $activities, true) && in_array(3, $activities, true) && in_array(5, $activities, true), 'Transitions or harsh braking lost');
 $state = $db->query('SELECT state_json FROM relay_units')->fetchColumn();
-expect(FleetSync::collectRelayVehicle($vehicle, $relay, $mapper, $now, $now + 2, 2, 10, 16384, $source) === 0, 'Restart overlap duplicated intent');
+expect(FleetSync::collectRelayWindow($vehicle, $relay, $mapper, $now, $now + 2, 2, 10, 16384, $source)['queued'] === 0, 'Restart overlap duplicated intent');
 expect($db->query('SELECT state_json FROM relay_units')->fetchColumn() === $state, 'Overlap recomputed detection state');
 echo "PASS FleetSync paged collection, actual mapping, same-second identity, atomic state and replay\n";
 $small = new DurableRelay($db, 8, static fn(int $n): int => 5, 4, 1048576);
 try {
-    FleetSync::collectRelayVehicle($vehicle, $small, $mapper, $now + 3, $now + 3, 2, 10, 16384,
+    FleetSync::collectRelayWindow($vehicle, $small, $mapper, $now + 3, $now + 3, 2, 10, 16384,
         new PagedWialon([$raw($now + 3, ['io_239' => 1])]));
     throw new LogicException('Expected capacity rejection');
 } catch (RuntimeException $error) {}
 expect($db->query('SELECT state_json FROM relay_units')->fetchColumn() === $state, 'Capacity rollback lost committed engine state');
 $broken = new PagedWialon([$raw($now + 3, []), $raw($now + 4, []), $raw($now + 5, [])], true);
 try {
-    FleetSync::collectRelayVehicle($vehicle, $relay, $mapper, $now + 3, $now + 5, 2, 10, 16384, $broken);
+    FleetSync::collectRelayWindow($vehicle, $relay, $mapper, $now + 3, $now + 5, 2, 10, 16384, $broken);
     throw new LogicException('Expected partial-window rejection');
 } catch (RuntimeException $error) {}
 expect($broken->closed && $broken->unloaded && $db->query('SELECT state_json FROM relay_units')->fetchColumn() === $state,
@@ -77,11 +81,11 @@ while ($relay->deliver('wialon:123', time(), static function (string $body, stri
     return ['code' => 200, 'data' => ['status' => '1']];
 }) === 'sent') {}
 expect(count($sent) === 4 && $relay->status('wialon:123')['queue']['unresolved'] == 0, 'Application payload cleanup failed');
-expect(FleetSync::collectRelayVehicle($vehicle, $relay, $mapper, $now, $now + 2, 2, 10, 16384, $source) === 0, 'Successful reports replayed');
+expect(FleetSync::collectRelayWindow($vehicle, $relay, $mapper, $now, $now + 2, 2, 10, 16384, $source)['queued'] === 0, 'Successful reports replayed');
 expect($db->query('SELECT COUNT(*) FROM relay_identity')->fetchColumn() == 4, 'Cleanup lost identities');
 echo "PASS confirmed application payload cleanup retains replay identity without message_log writes\n";
 $newSource = new PagedWialon([$raw($now + 3, ['io_239' => 1])]);
-FleetSync::collectRelayVehicle($vehicle, $relay, $mapper, $now + 3, $now + 3, 2, 10, 16384, $newSource);
+FleetSync::collectRelayWindow($vehicle, $relay, $mapper, $now + 3, $now + 3, 2, 10, 16384, $newSource);
 $called = false;
 expect($relay->deliver('wialon:123', time(), static function () use (&$called): array {
     $called = true; return ['code' => 200, 'data' => ['status' => '1']];

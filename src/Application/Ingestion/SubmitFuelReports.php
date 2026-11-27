@@ -37,21 +37,26 @@ final class SubmitFuelReports
                 throw new RuntimeException('Wialon login failed for fuel report');
             }
             foreach ($vehicles as $vehicle) {
-                $unit = (int) $vehicle['wialon_unit_id'];
+                $unit = $vehicle->wialon_unit_id;
+                if ($unit === null) {
+                    $skipped++;
+                    ($this->log)('fuel.skipped', ['vehicle_id' => $vehicle->id, 'reason' => 'no_wialon_unit'], false);
+                    continue;
+                }
                 $reading = FuelReportPolicy::read($vehicle, $this->source->read($unit));
                 if (isset($reading['reason'])) {
                     $skipped++;
-                    $context = ['vehicle_id' => $vehicle['id'], 'reason' => $reading['reason'], 'unit_id' => $unit];
+                    $context = ['vehicle_id' => $vehicle->id, 'reason' => $reading['reason'], 'unit_id' => $unit];
                     if ($reading['reason'] === 'no_live_fuel_value') {
-                        $context['sensor'] = $vehicle['fuel_level_sensor'];
+                        $context['sensor'] = $vehicle->fuel_level_sensor;
                     }
                     ($this->log)('fuel.skipped', $context, false);
                     continue;
                 }
                 $fuel = LatraPayloadPolicy::buildFuelInfo($reading['fuel']);
-                $payload = LatraPayloadPolicy::buildPayload($vehicle, $reading['source'], 16, [], $fuel);
+                $payload = LatraPayloadPolicy::buildPayload($vehicle, $reading['source'], 16, [], $fuel)->toWire();
                 try {
-                    $result = ($this->submit)($vehicle, $payload, $reading['raw_source'] ?? null);
+                    $result = ($this->submit)($vehicle, $payload, $reading['raw_source']);
                 } catch (Throwable $error) {
                     if (!$this->relay) {
                         throw $error;
@@ -71,7 +76,7 @@ final class SubmitFuelReports
                     : ($result['curlError'] ?? ($result['response'] ?? 'unknown'));
                 ($this->log)(
                     $this->relay ? 'fuel.queue_failed' : 'fuel.push_failed',
-                    ['vehicle_id' => $vehicle['id'], 'error' => $error],
+                    ['vehicle_id' => $vehicle->id, 'error' => $error],
                     true,
                 );
             }

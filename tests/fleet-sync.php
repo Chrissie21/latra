@@ -8,6 +8,9 @@ use Latra\Application\Collection\FleetRepository;
 use Latra\Application\Collection\FleetUnitSource;
 use Latra\Application\Collection\SyncFleetVehicles;
 use Latra\Domain\Collection\FleetSyncPolicy;
+use Latra\Domain\Collection\Vehicle;
+use Latra\Infrastructure\Persistence\VehicleRowDecoder;
+use Latra\Infrastructure\Wialon\WialonSourceReader;
 
 function fleetAssert(bool $condition, string $message): void
 {
@@ -74,26 +77,26 @@ final class FakeFleetRepository implements FleetRepository
     public array $mappings = [];
     private int $nextId = 100;
 
-    public function findByUnitId(int $unitId): ?array
+    public function findByUnitId(int $unitId): ?Vehicle
     {
         return $this->byUnit[$unitId] ?? null;
     }
 
-    public function findById(int $vehicleId): ?array
+    public function findById(int $vehicleId): ?Vehicle
     {
         return $this->byId[$vehicleId] ?? null;
     }
 
-    public function insert(array $vehicle): int
+    public function insert(Vehicle $vehicle): int
     {
         $id = $this->nextId++;
-        $this->inserts[$id] = $vehicle;
+        $this->inserts[$id] = new Vehicle(...[...(array) $vehicle, 'id' => $id]);
         return $id;
     }
 
-    public function update(int $vehicleId, array $vehicle): void
+    public function update(Vehicle $vehicle): void
     {
-        $this->updates[$vehicleId] = $vehicle;
+        $this->updates[$vehicle->id] = $vehicle;
     }
 
     public function seedActivityMappings(int $vehicleId): void
@@ -112,19 +115,23 @@ $unit = [
     'pos' => ['t' => 1700000000, 'x' => 39.2, 'y' => -6.8, 's' => 42.5, 'c' => 90, 'sc' => 9],
     'lmsg' => ['t' => 1700000001, 'p' => ['hdop' => 1.25]],
 ];
-$row = FleetSyncPolicy::vehicleRow($unit, '2026-11-16 10:00:00', 'ign');
-fleetAssert($row['wialon_unit_id'] === 77, 'Mapped unit id changed');
-fleetAssert($row['vehicle_reg_no'] === 'T123ABC', 'Registration extraction changed');
-fleetAssert($row['imei'] === null, 'Blank imei was not normalised to null');
-fleetAssert($row['last_sync_at'] === '2026-11-16 10:00:00', 'Sync timestamp changed');
-fleetAssert($row['is_active'] === 1, 'Synced vehicle is not active');
-fleetAssert($row['engine_param'] === 'ign', 'Engine sensor param changed');
-fleetAssert((float) $row['lat'] === -6.8 && (float) $row['lng'] === 39.2, 'Mapped position changed');
+$row = FleetSyncPolicy::vehicle((new WialonSourceReader())->decodeUnit($unit), '2026-11-16 10:00:00', 'ign');
+fleetAssert($row->wialon_unit_id === 77, 'Mapped unit id changed');
+fleetAssert($row->vehicle_reg_no === 'T123ABC', 'Registration extraction changed');
+fleetAssert($row->imei === null, 'Blank imei was not normalised to null');
+fleetAssert($row->last_sync_at === '2026-11-16 10:00:00', 'Sync timestamp changed');
+fleetAssert($row->is_active === true, 'Synced vehicle is not active');
+fleetAssert($row->engine_param === 'ign', 'Engine sensor param changed');
+fleetAssert($row->lat === -6.8 && $row->lng === 39.2, 'Mapped position changed');
 
-$withImei = FleetSyncPolicy::vehicleRow(['id' => 78, 'nm' => 'Synthetic', 'uid' => '123456789012345'], 'now', null);
-fleetAssert($withImei['imei'] === '123456789012345', 'Present imei was discarded');
-fleetAssert($withImei['engine_param'] === null, 'Absent engine sensor became a value');
-fleetAssert($withImei['lat'] === null && $withImei['lng'] === null, 'Missing position fabricated coordinates');
+$withImei = FleetSyncPolicy::vehicle(
+    (new WialonSourceReader())->decodeUnit(['id' => 78, 'nm' => 'Synthetic', 'uid' => '123456789012345']),
+    'now',
+    null,
+);
+fleetAssert($withImei->imei === '123456789012345', 'Present imei was discarded');
+fleetAssert($withImei->engine_param === null, 'Absent engine sensor became a value');
+fleetAssert($withImei->lat === null && $withImei->lng === null, 'Missing position fabricated coordinates');
 
 // ---------------------------------------------------------------------------
 // Full sync: insert new, update existing, seed mappings, close session
@@ -133,7 +140,12 @@ $source = new FakeFleetSource();
 $source->units = [['id' => 77, 'nm' => 'T456DEF', 'uid' => '1'], ['id' => 88, 'nm' => 'New', 'uid' => '2']];
 $source->engines = [77 => 'ign', 88 => null];
 $repository = new FakeFleetRepository();
-$repository->byUnit[77] = ['id' => 5];
+$repository->byUnit[77] = VehicleRowDecoder::decode([
+    'id' => 5,
+    'wialon_unit_id' => 77,
+    'speed_limit_kmh' => 80,
+    'fuel_cadence_min' => 15,
+]);
 $logs = [];
 $clock = new class implements \Latra\Application\Collection\FleetSyncClock {
     public function now(): string
@@ -148,17 +160,22 @@ $sync = new SyncFleetVehicles(
     static function (int $new, int $updated) use (&$logs): void {
         $logs[] = [$new, $updated];
     },
+    static fn(array $unit): Vehicle => (new WialonSourceReader())->decodeUnit($unit),
 );
 $stats = $sync->all();
 fleetAssert($stats === ['synced' => 1, 'updated' => 1], 'Sync counters changed: ' . json_encode($stats));
 fleetAssert($source->openCalls === 1 && $source->closeCalls === 1, 'Session was not opened and closed once');
 fleetAssert(isset($repository->updates[5]), 'Existing vehicle was not updated');
-fleetAssert($repository->updates[5]['vehicle_reg_no'] === 'T456DEF', 'Existing vehicle mapping changed');
-fleetAssert($repository->updates[5]['engine_param'] === 'ign', 'Existing engine param changed');
-fleetAssert($repository->updates[5]['last_sync_at'] === '2026-11-16 11:00:00', 'Clock was not used');
+fleetAssert($repository->updates[5]->vehicle_reg_no === 'T456DEF', 'Existing vehicle mapping changed');
+fleetAssert($repository->updates[5]->imei === '1', 'Fleet refresh lost the source IMEI');
+fleetAssert($repository->updates[5]->engine_param === 'ign', 'Existing engine param changed');
+fleetAssert($repository->updates[5]->last_sync_at === '2026-11-16 11:00:00', 'Clock was not used');
+fleetAssert($repository->updates[5]->speed_limit_kmh === 80.0 && $repository->updates[5]->fuel_cadence_min === 15,
+    'Fleet sync erased an operator-owned setting');
 fleetAssert(count($repository->inserts) === 1, 'New vehicle was not inserted');
 $inserted = reset($repository->inserts);
-fleetAssert($inserted['wialon_unit_id'] === 88 && $inserted['imei'] === '2', 'Inserted row changed');
+fleetAssert($inserted->id === 100, 'Insert input was not assigned a local id by the repository');
+fleetAssert($inserted->wialon_unit_id === 88 && $inserted->imei === '2', 'Inserted row changed');
 fleetAssert($repository->mappings === [5, 100], 'Activity mappings were not seeded for every vehicle');
 
 $source->opens = false;
@@ -172,16 +189,18 @@ $source = new FakeFleetSource();
 $source->unitData[123] = ['id' => 123, 'nm' => 'T789GHI', 'uid' => '123456789012345'];
 $source->engines[123] = 'ign';
 $repository = new FakeFleetRepository();
-$repository->byId[4] = ['id' => 4, 'wialon_unit_id' => 123];
-$sync = new SyncFleetVehicles($source, $repository, $clock, static function (): void {});
+$repository->byId[4] = VehicleRowDecoder::decode(['id' => 4, 'wialon_unit_id' => 123]);
+$sync = new SyncFleetVehicles($source, $repository, $clock, static function (): void {},
+    static fn(array $unit): Vehicle => (new WialonSourceReader())->decodeUnit($unit));
 $sync->one(4);
 fleetAssert(isset($repository->updates[4]), 'Single sync did not update the vehicle');
-fleetAssert($repository->updates[4]['vehicle_reg_no'] === 'T789GHI', 'Single sync mapping changed');
-fleetAssert($repository->updates[4]['engine_param'] === 'ign', 'Single sync engine param changed');
+fleetAssert($repository->updates[4]->vehicle_reg_no === 'T789GHI', 'Single sync mapping changed');
+fleetAssert($repository->updates[4]->imei === '123456789012345', 'Single refresh lost the source IMEI');
+fleetAssert($repository->updates[4]->engine_param === 'ign', 'Single sync engine param changed');
 fleetAssert($source->openCalls === 1 && $source->closeCalls === 1, 'Single sync session lifecycle changed');
 fleetAssert($repository->mappings === [], 'Single sync seeded activity mappings');
 
-$repository->byId[4]['wialon_unit_id'] = 999;
+$repository->byId[4] = $repository->byId[4]->withSynced(new Vehicle(wialon_unit_id: 999));
 $sync->one(4);
 fleetAssert(!isset($repository->updates[999]) && count($repository->updates) === 1, 'Missing unit produced an update');
 

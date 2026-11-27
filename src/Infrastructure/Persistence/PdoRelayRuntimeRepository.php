@@ -5,6 +5,7 @@ namespace Latra\Infrastructure\Persistence;
 
 use Latra\Application\Collection\RelayRuntimeRepository;
 use Latra\Domain\Collection\RelaySettings;
+use Latra\Domain\Collection\Vehicle;
 use PDO;
 use PDOStatement;
 
@@ -16,22 +17,22 @@ final class PdoRelayRuntimeRepository implements RelayRuntimeRepository
 
     public function activeVehiclesForBucket(int $bucketId): array
     {
-        return $this->run(
+        return VehicleRowDecoder::rows($this->run(
             'SELECT v.* FROM vehicles v JOIN bucket_vehicles bv ON bv.vehicle_id=v.id
              WHERE bv.bucket_id=? AND v.is_active=1',
             [$bucketId],
-        )->fetchAll(PDO::FETCH_ASSOC);
+        )->fetchAll(PDO::FETCH_ASSOC));
     }
 
     public function activeVehiclesForEventCollection(): array
     {
-        return $this->run(
+        return VehicleRowDecoder::rows($this->run(
             'SELECT DISTINCT v.* FROM vehicles v
              JOIN relay_vehicle_settings r ON r.vehicle_id=v.id AND r.is_enabled=1
              JOIN bucket_vehicles bv ON bv.vehicle_id=v.id
              JOIN automation_buckets b ON b.id=bv.bucket_id AND b.is_enabled=1
              WHERE v.is_active=1',
-        )->fetchAll(PDO::FETCH_ASSOC);
+        )->fetchAll(PDO::FETCH_ASSOC));
     }
 
     public function enabledEventActivities(): array
@@ -98,22 +99,22 @@ final class PdoRelayRuntimeRepository implements RelayRuntimeRepository
         )->fetchAll(PDO::FETCH_ASSOC);
     }
 
-    public function activeVehicleForUnit(int $unitId): ?array
+    public function activeVehicleForUnit(int $unitId): ?Vehicle
     {
         $row = $this->run(
             'SELECT * FROM vehicles WHERE wialon_unit_id=? AND is_active=1',
             [$unitId],
         )->fetch(PDO::FETCH_ASSOC);
-        return $row === false ? null : $row;
+        return $row === false ? null : VehicleRowDecoder::decode($row);
     }
 
-    public function vehicle(int $vehicleId): ?array
+    public function vehicle(int $vehicleId): ?Vehicle
     {
         $row = $this->run('SELECT * FROM vehicles WHERE id = ? LIMIT 1', [$vehicleId])->fetch(PDO::FETCH_ASSOC);
-        return $row === false ? null : $row;
+        return $row === false ? null : VehicleRowDecoder::decode($row);
     }
 
-    public function vehicleByIdentity(?string $vehicleRegNo, ?string $imei): ?array
+    public function vehicleByIdentity(?string $vehicleRegNo, ?string $imei): ?Vehicle
     {
         $clauses = [];
         $parameters = [];
@@ -130,7 +131,7 @@ final class PdoRelayRuntimeRepository implements RelayRuntimeRepository
             'SELECT * FROM vehicles WHERE ' . implode(' OR ', $clauses) . ' LIMIT 1',
             $parameters,
         )->fetch(PDO::FETCH_ASSOC);
-        return $row === false ? null : $row;
+        return $row === false ? null : VehicleRowDecoder::decode($row);
     }
 
     private function run(string $sql, array $parameters = []): PDOStatement

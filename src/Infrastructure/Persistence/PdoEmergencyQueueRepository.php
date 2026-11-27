@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Latra\Infrastructure\Persistence;
 
 use Latra\Application\Emergency\EmergencyQueueRepository;
+use Latra\Domain\Collection\Vehicle;
 use Latra\Domain\Emergency\EmergencyHandoffStatus;
 use PDO;
 
@@ -23,14 +24,14 @@ final class PdoEmergencyQueueRepository implements EmergencyQueueRepository
         return $statement->fetchAll(PDO::FETCH_ASSOC);
     }
 
-    public function vehicleById(int $vehicleId): ?array
+    public function vehicleById(int $vehicleId): ?Vehicle
     {
         $statement = $this->pdo->prepare(
             'SELECT id, vehicle_reg_no, imei FROM vehicles WHERE id = ?'
         );
         $statement->execute([$vehicleId]);
         $vehicle = $statement->fetch(PDO::FETCH_ASSOC);
-        return $vehicle === false ? null : $vehicle;
+        return $vehicle === false ? null : VehicleRowDecoder::decode($vehicle);
     }
 
     public function recordHandoff(int $queueId, EmergencyHandoffStatus $status, string $response): void

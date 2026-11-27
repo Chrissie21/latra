@@ -45,8 +45,8 @@ class Database {
     public static function update(...$args): never { throw new RuntimeException('Legacy message update bypassed relay'); }
 }
 class LatraMapper {
-    public static function buildPayload(array $vehicle, array $source, int $activityId, array $addonInfo=[], array $fuelInfo=[]): array {
-        return ['vehicle_reg_no'=>$vehicle['vehicle_reg_no'],'imei'=>$vehicle['imei'],
+    public static function buildPayload(\Latra\Domain\Collection\Vehicle $vehicle, array $source, int $activityId, array $addonInfo=[], array $fuelInfo=[]): array {
+        return ['vehicle_reg_no'=>$vehicle->vehicle_reg_no,'imei'=>$vehicle->imei,
             'items'=>[['activity_id'=>(string)$activityId,'timestamp'=>(string)(((int)($source['wialon_msg_time'] ?? time()))*1000)]]];
     }
     public static function validatePayload(array $payload): array { return []; }
@@ -62,21 +62,25 @@ class WialonAPI { public function __construct() { throw new RuntimeException('Le
 class RelayRuntime {
     public static function enabled(): bool { return getenv('API_RELAY_DISABLED') !== '1'; }
     public static function queueForVehicle(array $payload, ?int $vehicleId = null): array {
-        $vehicle = ['id' => $vehicleId ?? 1, 'vehicle_reg_no' => $payload['vehicle_reg_no'] ?? 'SYNTHETIC', 'imei' => $payload['imei'] ?? '123456789012345'];
-        if (($vehicle['id'] ?? null) !== 1 || empty($payload['items'])) {
+        $vehicle = new \Latra\Domain\Collection\Vehicle(
+            id: $vehicleId ?? 1,
+            vehicle_reg_no: $payload['vehicle_reg_no'] ?? 'SYNTHETIC',
+            imei: $payload['imei'] ?? '123456789012345',
+        );
+        if ($vehicle->id !== 1 || empty($payload['items'])) {
             throw new RuntimeException('Invalid fixture relay queue call');
         }
         return self::queuePayload($vehicle, $payload);
     }
-    public static function queuePayload(array $vehicle, array $payload): array {
-        if (($vehicle['id'] ?? null) !== 1 || empty($payload['items'])) {
+    public static function queuePayload(\Latra\Domain\Collection\Vehicle $vehicle, array $payload): array {
+        if ($vehicle->id !== 1 || empty($payload['items'])) {
             throw new RuntimeException('Invalid fixture relay queue call');
         }
         return ['success'=>true,'queued'=>1,'message'=>'Saved to the durable relay.'];
     }
-    public static function poll(array $vehicle, int $window, int $limit): array {
+    public static function poll(\Latra\Domain\Collection\Vehicle $vehicle, int $window, int $limit): array {
         if (getenv('API_SOURCE_UNAVAILABLE') === '1') throw new \Latra\Domain\Exception\SourceUnavailable('Incomplete source window');
-        if ($vehicle['id'] !== 1 || $window !== 86400 || $limit !== 100) throw new RuntimeException('Portal source window/work policy changed');
+        if ($vehicle->id !== 1 || $window !== 86400 || $limit !== 100) throw new RuntimeException('Portal source window/work policy changed');
         return ['fetched'=>3,'inserted'=>2,'rejected'=>1,'skipped'=>0,'queued'=>3];
     }
 }

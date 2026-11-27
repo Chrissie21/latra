@@ -21,7 +21,8 @@ final class PdoScheduledVehicleRepository implements ScheduledVehicleRepository
             JOIN automation_buckets b ON b.id=bv.bucket_id AND b.is_enabled=1') as $row) {
             $skip[(int)$row['vehicle_id']] = true;
         }
-        return array_values(array_filter($vehicles, static fn(array $v): bool => !isset($skip[(int)$v['id']])));
+        return VehicleRowDecoder::rows(array_values(array_filter($vehicles,
+            static fn(array $v): bool => !isset($skip[(int)$v['id']]))));
     }
     public function emergencyVehicles(): array
     {
@@ -30,7 +31,7 @@ final class PdoScheduledVehicleRepository implements ScheduledVehicleRepository
             $statement = $this->database->prepare('SELECT * FROM vehicles WHERE id=?');
             $statement->execute([$row['vehicle_id']]);
             $vehicle = $statement->fetch(PDO::FETCH_ASSOC);
-            if ($vehicle) $vehicles[] = $vehicle;
+            if ($vehicle) $vehicles[] = VehicleRowDecoder::decode($vehicle);
         }
         return $vehicles;
     }

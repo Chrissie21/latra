@@ -6,6 +6,9 @@ if (PHP_SAPI !== 'cli') exit(1);
 require_once __DIR__ . '/../includes/autoload.php';
 
 use Latra\Application\Collection\RelayPayloadMapper;
+use Latra\Domain\Collection\Vehicle;
+use Latra\Infrastructure\Wialon\WialonSignalReader;
+use Latra\Infrastructure\Wialon\WialonSourceReader;
 
 spl_autoload_register(static function (string $class): void {
     if (!str_starts_with($class, 'Latra\\')) {
@@ -18,10 +21,10 @@ function domainMappingExpect(bool $condition, string $message): void
     if (!$condition) throw new RuntimeException($message);
 }
 
-$vehicle = ['id' => 1, 'imei' => '123456789012345', 'vehicle_reg_no' => 'SYNTHETIC',
-    'engine_param' => 'io_239'];
+$vehicle = new Vehicle(id: 1, imei: '123456789012345', vehicle_reg_no: 'SYNTHETIC',
+    engine_param: 'io_239');
 $mapper = new RelayPayloadMapper($vehicle, array_fill_keys(range(1, 24), true), range(1, 24),
-    80, 2, 3200, 'teltonika-fmb');
+    80, 2, 3200, 'teltonika-fmb', new WialonSignalReader(), new WialonSourceReader());
 $now = time() - 120;
 $source = static fn(array $parameters, int $offset = 0, float $longitude = 39.2): array => [
     't' => $now + $offset,

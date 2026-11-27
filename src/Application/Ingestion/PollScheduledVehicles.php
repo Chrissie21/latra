@@ -45,7 +45,7 @@ final class PollScheduledVehicles
                 $result = ($this->poll)($vehicle, $window, $limit);
                 $items += $result['inserted'] + ($emergency ? 0 : $result['rejected']);
             } catch (Throwable $error) {
-                $context = ['vehicle' => $vehicle['id']];
+                $context = ['vehicle' => $vehicle->id];
                 if (!$emergency) {
                     $context['error'] = $error->getMessage();
                 }

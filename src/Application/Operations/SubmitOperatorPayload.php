@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace Latra\Application\Operations;
 
 use Closure;
+use Latra\Domain\Collection\Vehicle;
 use RuntimeException;
 use Throwable;
 
@@ -27,14 +28,16 @@ final class SubmitOperatorPayload
     {
         $message = $this->repository->messageForRelay($messageId);
         if (!$message) throw new RuntimeException('Message not found');
+        $vehicle = $this->repository->vehicle((int) $message['vehicle_id']);
+        if (!$vehicle) throw new RuntimeException('Vehicle not found');
         $payload = ($this->mapper)(
-            $message,
+            $vehicle,
             $message,
             (int) $message['activity_id'],
             json_decode($message['addon_info'] ?? '[]', true),
             json_decode($message['fuel_info'] ?? '[]', true),
         );
-        return $this->submitForVehicle((int) $message['vehicle_id'], $payload);
+        return $this->submitForVehicle((int) $message['vehicle_id'], $payload, $vehicle);
     }
 
     /** Queue an operator-edited payload that belongs to a stored source message. */
@@ -65,9 +68,9 @@ final class SubmitOperatorPayload
         return $this->submitForVehicle((int) $log['vehicle_id'], $payload);
     }
 
-    private function submitForVehicle(int $vehicleId, array $payload): array
+    private function submitForVehicle(int $vehicleId, array $payload, ?Vehicle $vehicle = null): array
     {
-        $vehicle = $this->repository->vehicle($vehicleId);
+        $vehicle ??= $this->repository->vehicle($vehicleId);
         if (!$vehicle) throw new RuntimeException('Vehicle not found');
         $errors=($this->validator)($payload);
         try {

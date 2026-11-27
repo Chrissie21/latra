@@ -25,8 +25,12 @@ final class ReadSubmissionEvidence
         $message=$this->repository->message($messageId);
         if (!$message) throw new RuntimeException('Message not found');
         $payload=json_decode($message['latra_payload'] ?? '',true);
-        if (!is_array($payload) || !$payload) $payload=($this->buildPayload)($message,$message,(int)$message['activity_id'],
-            json_decode($message['addon_info'] ?? '[]',true),json_decode($message['fuel_info'] ?? '[]',true));
+        if (!is_array($payload) || !$payload) {
+            $vehicle=$this->repository->vehicle((int)($message['vehicle_id'] ?? 0));
+            if (!$vehicle) throw new RuntimeException('Vehicle not found');
+            $payload=($this->buildPayload)($vehicle,$message,(int)$message['activity_id'],
+                json_decode($message['addon_info'] ?? '[]',true),json_decode($message['fuel_info'] ?? '[]',true));
+        }
         return ['payload'=>$payload];
     }
     public function activityStatistics(): array

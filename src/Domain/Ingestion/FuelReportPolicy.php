@@ -3,34 +3,44 @@ declare(strict_types=1);
 
 namespace Latra\Domain\Ingestion;
 
+use Latra\Domain\Collection\Vehicle;
+
 final class FuelReportPolicy
 {
-    public static function read(array $vehicle, ?array $data): array
+    /**
+     * Choose the configured sensor from canonical decoded evidence.
+     *
+     * A missing or unconfigured sensor stays a null measurement with its source retained for
+     * review; it is never converted into a healthy report or an HTTP attempt.
+     *
+     * @return array{reason:string}|array{source:TelemetryMessage,raw_source:array<string,mixed>,fuel:FuelEvidence}
+     */
+    public static function read(Vehicle $vehicle, ?TelemetryMessage $message): array
     {
-        if ($data === null) {
+        if ($message === null) {
             return ['reason' => 'no_unit_data'];
         }
-        $value = $unit = null;
-        foreach (($data['sens'] ?? []) as $sensor) {
-            if ((string) ($sensor['t'] ?? '') === (string) $vehicle['fuel_level_sensor']) {
-                $value = $sensor['v'] ?? null;
-                $unit = $sensor['u'] ?? null;
+        $configured = (string) ($vehicle->fuel_level_sensor ?? '');
+        $selected = null;
+        foreach ($message->sensors as $sensor) {
+            if ((string) ($sensor->type ?? '') === $configured) {
+                $selected = $sensor;
                 break;
             }
         }
-        $position=is_array($data['pos'] ?? null) ? $data['pos'] : [];
+
         return [
-            'source' => [
-                'wialon_msg_time' => is_numeric($position['t'] ?? null) && (int)$position['t']>0 ? (int)$position['t'] : null,
-                'lat' => $position['y'] ?? null,
-                'lng' => $position['x'] ?? null,
-                'altitude' => $position['z'] ?? null,
-                'speed' => $position['s'] ?? null,
-                'bearing' => $position['c'] ?? null,
-                'satellite_count' => $position['sc'] ?? null,
-            ],
-            'raw_source' => $data,
-            'fuel' => ['fuel_level' => $value, 'fuel_sensor_param' => $vehicle['fuel_level_sensor'], 'unit' => $unit],
+            'source' => $message,
+            'raw_source' => $message->rawSource,
+            'fuel' => new FuelEvidence(
+                unit: $selected?->unit,
+                level: self::numberOrNull($selected?->value),
+            ),
         ];
+    }
+
+    private static function numberOrNull(mixed $value): ?float
+    {
+        return ($value === null || $value === '' || !is_numeric($value)) ? null : (float) $value;
     }
 }

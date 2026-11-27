@@ -100,14 +100,14 @@ function operatorPayloadRepository(): \Latra\Application\Operations\OperatorPayl
 function operatorFetch(): \Latra\Application\Operations\FetchOperatorMessages {
     return new \Latra\Application\Operations\FetchOperatorMessages(
         operatorReadRepository(),
-        static fn(array $vehicle,int $window,int $limit): array => RelayRuntime::poll($vehicle,$window,$limit),
+        static fn(\Latra\Domain\Collection\Vehicle $vehicle,int $window,int $limit): array => RelayRuntime::poll($vehicle,$window,$limit),
     );
 }
 
 function operatorEvidence(): \Latra\Application\Operations\ReadSubmissionEvidence {
     return new \Latra\Application\Operations\ReadSubmissionEvidence(
         operatorReadRepository(),
-        static fn(array $vehicle,array $source,int $activity,array $addon,array $fuel): array => LatraMapper::buildPayload($vehicle,$source,$activity,$addon,$fuel),
+        static fn(\Latra\Domain\Collection\Vehicle $vehicle,array $source,int $activity,array $addon,array $fuel): array => LatraMapper::buildPayload($vehicle,$source,$activity,$addon,$fuel),
     );
 }
 
@@ -118,21 +118,22 @@ function operatorSettings(): \Latra\Application\Operations\ManageOperatorSetting
 function operatorSubmit(): \Latra\Application\Operations\SubmitOperatorPayload {
     return new \Latra\Application\Operations\SubmitOperatorPayload(
         operatorActionRepository(),
-        static fn(array $vehicle,array $source,int $activity,array $addon,array $fuel): array => LatraMapper::buildPayload($vehicle,$source,$activity,$addon,$fuel),
+        static fn(\Latra\Domain\Collection\Vehicle $vehicle,array $source,int $activity,array $addon,array $fuel): array => LatraMapper::buildPayload($vehicle,$source,$activity,$addon,$fuel),
         static fn(array $payload): array => LatraMapper::validatePayload($payload),
-        static fn(array $vehicle,array $payload): array => RelayRuntime::queueForVehicle($payload, (int) $vehicle['id']),
+        static fn(\Latra\Domain\Collection\Vehicle $vehicle,array $payload): array => RelayRuntime::queueForVehicle($payload, $vehicle->id),
     );
 }
 
 function operatorBulkPush(): \Latra\Application\Operations\PushActivityToVehicles {
     return new \Latra\Application\Operations\PushActivityToVehicles(
         operatorActionRepository(),
-        static fn(array $vehicle,array $source,int $activity,array $addon,array $fuel): array => LatraMapper::buildPayload($vehicle,$source,$activity,$addon,$fuel),
+        static fn(\Latra\Domain\Collection\Vehicle $vehicle,array $source,int $activity,array $addon,array $fuel): array => LatraMapper::buildPayload($vehicle,$source,$activity,$addon,$fuel),
         static fn(int $activity,array $params,array $custom): ?array => LatraMapper::buildAddonInfo($activity,$params,$custom),
         static fn(array $params): array => LatraMapper::buildFuelInfo($params),
         static fn(int $vehicle,int $at): array => LatraMapper::buildTripStats($vehicle,$at),
-        static fn(array $vehicle,array $payload): array => RelayRuntime::queueForVehicle($payload, (int) $vehicle['id']),
+        static fn(\Latra\Domain\Collection\Vehicle $vehicle,array $payload): array => RelayRuntime::queueForVehicle($payload, $vehicle->id),
         static fn(): int => time(),
+        new \Latra\Infrastructure\Wialon\WialonSourceReader(),
     );
 }
 
@@ -243,6 +244,7 @@ try {
                 operatorPayloadRepository(),
                 new \Latra\Infrastructure\Wialon\WialonLatestVehicleSource(static fn(): WialonAPI => new WialonAPI()),
                 static fn(int $vehicle,int $at): array => LatraMapper::buildTripStats($vehicle,$at),static fn(): int => time(),
+                new \Latra\Infrastructure\Wialon\WialonSourceReader(),
             ))->build((int)($_GET['vehicle_id'] ?? 0),(int)($_GET['activity_id'] ?? 0),(string)($_GET['mode'] ?? 'single')));
             break;
 

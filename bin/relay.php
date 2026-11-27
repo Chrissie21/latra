@@ -25,7 +25,7 @@ try {
     require_once __DIR__ . '/../config.php';
     if (!RelayRuntime::enabled()) throw new RuntimeException('Relay architecture is not active');
     $vehicle = (new \Latra\Infrastructure\Persistence\PdoRelayRuntimeRepository(Database::getInstance()))->vehicle($vehicleId);
-    if (!$vehicle || empty($vehicle['is_active']) || empty($vehicle['wialon_unit_id'])) throw new RuntimeException('Active Wialon vehicle required');
+    if (!$vehicle || $vehicle->is_active !== true || $vehicle->wialon_unit_id === null) throw new RuntimeException('Active Wialon vehicle required');
     $actions = (int) isset($options['enroll']) + (int) isset($options['status']) + (int) isset($options['recover-review']);
     if ($actions > 1 || ($actions > 0 && (isset($options['from']) || isset($options['to'])))) {
         throw new InvalidArgumentException('Choose one relay action');

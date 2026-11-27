@@ -46,6 +46,8 @@ jobs:
           php tests/latra-mock-api.php
           php tests/relay-mapping.php
           php tests/relay-domain-mapping.php
+          php tests/telemetry-signals.php
+          php tests/source-envelope.php
           php tests/relay-collection-policy.php
           php tests/relay-collection-port.php
           php tests/relay-collection-repository.php
@@ -53,6 +55,7 @@ jobs:
           php tests/relay-stream-usecase.php
           php tests/relay-enrollment.php
           php tests/relay-runtime-usecases.php
+          php tests/typed-vehicle-boundary.php
           php tests/relay-settings-type.php
           php tests/emergency-relay-status.php
           php tests/relay-recovery.php

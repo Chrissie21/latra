@@ -1,10 +1,14 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/vts-fixtures.php';
 require __DIR__.'/../includes/autoload.php';
 require __DIR__.'/../includes/DurableRelay.php';
 use Latra\Application\Collection\RelayPayloadMapper;
 use Latra\Application\Collection\QueueManualRelayPayload;
 use Latra\Infrastructure\Persistence\PdoRelayDeliveryRepository;
+use Latra\Infrastructure\Persistence\VehicleRowDecoder;
+use Latra\Infrastructure\Wialon\WialonSignalReader;
+use Latra\Infrastructure\Wialon\WialonSourceReader;
 use Latra\Application\Delivery\DeliverPendingReport;
 function checkReview(bool $ok,string $why):void{if(!$ok)throw new RuntimeException($why);}
 if(class_exists('Pdo\\Sqlite')) { class RequiredReviewBase extends Pdo\Sqlite {} }
@@ -31,17 +35,20 @@ $db->exec('CREATE TABLE relay_units(unit TEXT PRIMARY KEY,collected_through INTE
 $db->exec('CREATE TABLE relay_identity(id INTEGER PRIMARY KEY AUTOINCREMENT,delivery_key TEXT UNIQUE,unit TEXT,source_time INTEGER,state TEXT,source_key TEXT)');
 $db->exec('CREATE TABLE relay_pending(id INTEGER PRIMARY KEY AUTOINCREMENT,delivery_key TEXT UNIQUE,unit TEXT,source_time INTEGER,payload TEXT,status TEXT,attempts INTEGER DEFAULT 0,next_attempt INTEGER DEFAULT 0,last_error TEXT)');
 $db->exec('CREATE TABLE relay_activity_identity(source_key TEXT,activity_id INTEGER,delivery_key TEXT,PRIMARY KEY(source_key,activity_id))');
-$vehicle=['id'=>1,'wialon_unit_id'=>100,'vehicle_reg_no'=>'SYNTHETIC','imei'=>'123456789012345'];
+$vehicleRow=['id'=>1,'wialon_unit_id'=>100,'vehicle_reg_no'=>'SYNTHETIC','imei'=>'123456789012345'];
+$vehicle=VehicleRowDecoder::decode($vehicleRow);
 $now=time()-120;
 $raw=['t'=>$now,'pos'=>['x'=>39.2,'y'=>-6.8,'z'=>0,'s'=>0,'c'=>0,'sc'=>8],
     'p'=>['hdop'=>1,'d2d3'=>3,'rssi'=>0,'lac'=>0,'cell_id'=>0,'mcc'=>640]];
-$mapper=static fn($v)=>new RelayPayloadMapper($v,[1=>true],[1],80,2,3200,'generic');
-$cases=['pos.y','pos.x','pos.z','pos.s','pos.c','pos.sc','p.hdop','p.d2d3','p.rssi','p.lac','p.cell_id','p.mcc','t','imei','vehicle_reg_no'];
+$mapper=static fn(\Latra\Domain\Collection\Vehicle $v)=>new RelayPayloadMapper($v,[1=>true,16=>true],[1,16],80,2,3200,'generic',new WialonSignalReader(), new WialonSourceReader());
+$cases=['pos.y','pos.x','pos.z','pos.s','pos.c','pos.sc','p.hdop','p.d2d3','p.rssi','p.lac','p.cell_id','p.mcc','t','imei','vehicle_reg_no','p','pos','fuel_fractional_status'];
 $sends=0;
 foreach($cases as $index=>$field){
     $message=$raw;$owner=$vehicle;
-    if(str_contains($field,'.')){[$part,$key]=explode('.',$field);unset($message[$part][$key]);}
-    elseif($field==='t')unset($message['t']);else $owner[$field]=null;
+    if($field==='fuel_fractional_status') $message['p']=vtsTestParams(['fuel'=>2100,'fuel_valid_flag'=>0.5]);
+    elseif(str_contains($field,'.')){[$part,$key]=explode('.',$field);unset($message[$part][$key]);}
+    elseif(in_array($field,['p','pos'],true))unset($message[$field]);
+    elseif($field==='t')unset($message['t']);else $owner=VehicleRowDecoder::decode(array_replace($vehicleRow,[$field=>null]));
     $map=$mapper($owner);$unit='wialon:'.(1000+$index).':poll';
     $queue=new DurableRelay($db,3,static fn()=>1,100,1048576,null,true);
     $fetch=static fn()=>['count'=>1,'messages'=>[$message]];
@@ -50,7 +57,8 @@ foreach($cases as $index=>$field){
     $statement=$db->prepare('SELECT * FROM relay_pending WHERE unit=?');$statement->execute([$unit]);$row=$statement->fetch(PDO::FETCH_ASSOC);$statement->closeCursor();
     checkReview($row['status']==='review' && $row['next_attempt']===null && (int)$row['attempts']===0,"$field scheduled for retry");
     checkReview(json_decode($row['payload'],true)==$message,"$field raw evidence changed");
-    checkReview(str_contains($row['last_error'],'required') || str_contains($row['last_error'],'numeric'),"$field lacks review reason");
+    checkReview(str_contains($row['last_error'],'required') || str_contains($row['last_error'],'numeric')
+        || str_contains($row['last_error'],'integer string'),"$field lacks review reason");
     $again=$queue->collectWindow($unit,$now,$now,1,1,1048576,$fetch,[$map,'map']);
     checkReview($again['skipped']===1 && $again['queued']===0,"$field duplicate review created");
     checkReview($queue->deliver($unit,$now+100,static function()use(&$sends){$sends++;return [];})==='blocked',"$field was delivered");
@@ -60,7 +68,7 @@ foreach(['fuel_unit','fuel_level','rt_fuel','fuel_signal','fuel_valid_flag','fue
     $message['p']+=['event'=>'fuel','fuel_unit'=>'mm','fuel_level'=>2100,'rt_fuel'=>2134,'fuel_signal'=>75,
         'fuel_valid_flag'=>0,'fuel_soft_status'=>0,'fuel_hard_fault'=>0,'tank_temp'=>31.2];
     unset($message['p'][$field]);
-    $map=new RelayPayloadMapper($vehicle,[1=>true,16=>true],[1,16],80,2,3200,'generic');
+    $map=new RelayPayloadMapper($vehicle,[1=>true,16=>true],[1,16],80,2,3200,'generic',new WialonSignalReader(), new WialonSourceReader());
     $q=new DurableRelay($db,3,static fn()=>1,100,1048576,null,true);
     $result=$q->collectWindow('wialon:'.(2000+$i).':poll',$now,$now,1,1,1048576,
         static fn()=>['count'=>1,'messages'=>[$message]],[$map,'map']);
@@ -89,16 +97,21 @@ checkReview(json_decode($stored,true)['source_evidence']['sens'][0]['u']==='l','
 $fuelSource=new class implements \Latra\Application\Ingestion\FuelReportSource {
     public bool $closed=false;
     public function open():bool{return true;}
-    public function read(int $unitId):?array{return ['source'=>'synthetic-fuel','sens'=>[['t'=>'fuel','v'=>50,'u'=>'l']]];}
+    public function read(int $unitId):?\Latra\Domain\Ingestion\TelemetryMessage{
+        return (new WialonSourceReader())->decodeUnitData(
+            ['source'=>'synthetic-fuel','sens'=>[['t'=>'fuel','v'=>50,'u'=>'l']]],
+        );
+    }
     public function close():void{$this->closed=true;}
 };
-$fuelRepo=new class($vehicle) implements \Latra\Application\Ingestion\FuelReportRepository {
-    public function __construct(private array $vehicle){}
-    public function vehicles():array{return [$this->vehicle+['fuel_level_sensor'=>'fuel']];}
+$fuelVehicle=VehicleRowDecoder::decode($vehicleRow+['fuel_level_sensor'=>'fuel']);
+$fuelRepo=new class($fuelVehicle) implements \Latra\Application\Ingestion\FuelReportRepository {
+    public function __construct(private \Latra\Domain\Collection\Vehicle $vehicle){}
+    public function vehicles():array{return [$this->vehicle];}
 };
 $manualQueue=new QueueManualRelayPayload($queue,1048576);
 $fuelJob=new \Latra\Application\Ingestion\SubmitFuelReports($fuelRepo,$fuelSource,
-    static fn($v,$p,$evidence)=>$manualQueue->queue($v,$p,$evidence),static fn()=>null,true);
+    static fn(\Latra\Domain\Collection\Vehicle $v,$p,$evidence)=>$manualQueue->queue($v,$p,$evidence),static fn()=>null,true);
 checkReview($fuelJob->run()===0 && $fuelSource->closed,'incomplete fuel was claimed sendable or source leaked');
 $fuelRow=$db->query('SELECT status,payload FROM relay_pending ORDER BY id DESC LIMIT 1')->fetch(PDO::FETCH_ASSOC);
 $fuelRaw=json_decode($fuelRow['payload'],true);
@@ -107,8 +120,8 @@ checkReview($fuelRow['status']==='review' && $fuelRaw['source_evidence']['sens']
     'incomplete scheduled fuel was discarded, fabricated, or lost raw calibration evidence');
 // API use-case validation must route incomplete custom input to the real durable queue.
 $operatorRepo=new class($vehicle) implements \Latra\Application\Operations\OperatorActionRepository {
-    public function __construct(private array $owner){}
-    public function vehicle(int $id):?array{return $this->owner;}
+    public function __construct(private \Latra\Domain\Collection\Vehicle $owner){}
+    public function vehicle(int $id):?\Latra\Domain\Collection\Vehicle{return $this->owner;}
     public function messageForRelay(int $id):?array{return null;}
     public function messageForSubmission(int $id):?array{return null;}
     public function latestMessage(int $id):?array{return null;}

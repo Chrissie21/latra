@@ -8,12 +8,16 @@ use Latra\Domain\Collection\RelayDeliveryGatePolicy;
 use Latra\Domain\Collection\RelayIdentityPolicy;
 use Latra\Domain\Collection\RelayRuntimePolicy;
 use Latra\Domain\Collection\RelaySettings;
+use Latra\Domain\Collection\Vehicle;
 use Latra\Domain\Delivery\RelayDeliveryTarget;
 use Latra\Domain\Delivery\RelayDeliveryTransportPolicy;
+use Latra\Domain\Exception\InvalidSubmission;
 use Latra\Domain\Ingestion\DeviceStatusPolicy;
 use Latra\Infrastructure\Persistence\PdoIngestionSettingsRepository;
 use Latra\Infrastructure\Persistence\PdoRelayEnrollmentRepository;
 use Latra\Infrastructure\Persistence\PdoRelayRuntimeRepository;
+use Latra\Infrastructure\Wialon\WialonSignalReader;
+use Latra\Infrastructure\Wialon\WialonSourceReader;
 
 final class RelayRuntime {
     public static function enabled(): bool {
@@ -22,6 +26,16 @@ final class RelayRuntime {
 
     private static function repository(): PdoRelayRuntimeRepository {
         return new PdoRelayRuntimeRepository(Database::getInstance());
+    }
+
+    private static function vehicleId(Vehicle $vehicle): int {
+        if ($vehicle->id === null) throw new InvalidSubmission('Vehicle has no local identity');
+        return $vehicle->id;
+    }
+
+    private static function unitId(Vehicle $vehicle): int {
+        if ($vehicle->wialon_unit_id === null) throw new InvalidSubmission('Vehicle has no Wialon unit identity');
+        return $vehicle->wialon_unit_id;
     }
 
     public static function settings(int $vehicleId): RelaySettings {
@@ -51,27 +65,27 @@ final class RelayRuntime {
     }
 
     /** Enrollment changes only relay settings, never activity mappings or schedules. */
-    public static function enroll(array $vehicle, string $profile, array $budgets): void {
+    public static function enroll(Vehicle $vehicle, string $profile, array $budgets): void {
         (new EnrollRelayVehicle(new PdoRelayEnrollmentRepository(Database::getInstance())))
-            ->enroll((int) $vehicle['id'], (int) $vehicle['wialon_unit_id'], $profile, $budgets);
+            ->enroll(self::vehicleId($vehicle), self::unitId($vehicle), $profile, $budgets);
     }
 
     /** Payload-free operator status includes each independent collection stream. */
-    public static function status(array $vehicle): array {
-        $settings = self::settings((int) $vehicle['id']);
-        $status = self::repository()->relayStatus('wialon:' . $vehicle['wialon_unit_id']);
+    public static function status(Vehicle $vehicle): array {
+        $settings = self::settings(self::vehicleId($vehicle));
+        $status = self::repository()->relayStatus('wialon:' . self::unitId($vehicle));
         return ['profile' => $settings->profile, 'streams' => $status['streams'], 'queue' => $status['queue']];
     }
 
     /** Operator-triggered recovery uses current identity and mapping policy without fetching source data. */
-    public static function recoverReviews(array $vehicle): array {
-        $settings = self::settings((int) $vehicle['id']);
-        $vehicleUnit = 'wialon:' . $vehicle['wialon_unit_id'];
+    public static function recoverReviews(Vehicle $vehicle): array {
+        $settings = self::settings(self::vehicleId($vehicle));
+        $vehicleUnit = 'wialon:' . self::unitId($vehicle);
         $queue = self::queue($settings);
         $map = new \Latra\Application\Collection\MapRelayReview(
             $vehicleUnit,
             static fn(): array => self::repository()->enabledEventActivityIds(),
-            static fn(): array => self::allowed((int) $vehicle['id']),
+            static fn(): array => self::allowed(self::vehicleId($vehicle)),
             static fn(array $source, array $allowed, bool $events): array =>
                 self::mapper($vehicle, $settings, $allowed, $events)->map($source, []),
         );
@@ -87,23 +101,26 @@ final class RelayRuntime {
         return new PdoIngestionSettingsRepository(Database::getInstance());
     }
 
-    private static function mapper(array $vehicle, RelaySettings $settings, array $allowed, bool $events): RelayPayloadMapper {
+    private static function mapper(Vehicle $vehicle, RelaySettings $settings, array $allowed, bool $events): RelayPayloadMapper {
         $ingestion = self::ingestionSettings();
-        return new RelayPayloadMapper($vehicle, $ingestion->enabledActivities((int) $vehicle['id']), $allowed,
-            !empty($vehicle['speed_limit_kmh']) ? (float) $vehicle['speed_limit_kmh']
-                : $ingestion->speedLimit((int) $vehicle['id']),
+        $vehicleId = self::vehicleId($vehicle);
+        return new RelayPayloadMapper($vehicle, $ingestion->enabledActivities($vehicleId), $allowed,
+            !empty($vehicle->speed_limit_kmh) ? (float) $vehicle->speed_limit_kmh
+                : $ingestion->speedLimit($vehicleId),
             Schema::configInt('overspeed_consecutive', RelayRuntimePolicy::OVERSPEED_CONSECUTIVE),
             Schema::configInt('battery_low_mv', DeviceStatusPolicy::BATTERY_LOW_MV), $settings->profile,
+            new WialonSignalReader(),
+            new WialonSourceReader(),
             $events ? max(0, Schema::configInt('event_engine_cooldown_seconds', RelayRuntimePolicy::EVENT_COOLDOWN_SECONDS)) : 0,
             ParamResolver::enabledAliases());
     }
 
     /** Independent stream cursors preserve bucket cadences while events use their own cadence. */
-    public static function collect(array $vehicle, int $window, int $limit, string $stream, array $allowed,
+    public static function collect(Vehicle $vehicle, int $window, int $limit, string $stream, array $allowed,
         ?WialonAPI $source = null, ?int $explicitFrom = null, ?int $explicitTo = null): array {
-        $settings = self::settingsOrNull((int) $vehicle['id']);
+        $settings = self::settingsOrNull(self::vehicleId($vehicle));
         if ($settings === null) {
-            Logger::warn('relay.not_enrolled', ['vehicle' => (int) $vehicle['id']]);
+            Logger::warn('relay.not_enrolled', ['vehicle' => self::vehicleId($vehicle)]);
             return ['fetched' => 0, 'queued' => 0, 'inserted' => 0, 'rejected' => 0, 'skipped' => 0];
         }
         $queue = self::queue($settings);
@@ -120,21 +137,21 @@ final class RelayRuntime {
             },
             static fn(): int => time(),
         ))->collect(
-            'wialon:' . $vehicle['wialon_unit_id'], $stream, $window, $limit,
-            $settings->maxRecords, $settings->maxBytes, $explicitFrom, $explicitTo,
+            'wialon:' . self::unitId($vehicle), $stream, $window,
+            $limit, $settings->maxRecords, $settings->maxBytes, $explicitFrom, $explicitTo,
         );
     }
 
-    public static function poll(array $vehicle, int $window, int $limit): array {
-        return self::collect($vehicle, $window, $limit, ':poll', self::allowed((int) $vehicle['id']));
+    public static function poll(Vehicle $vehicle, int $window, int $limit): array {
+        return self::collect($vehicle, $window, $limit, ':poll', self::allowed(self::vehicleId($vehicle)));
     }
 
     public static function bucket(array $bucket, ?callable $sourceFactory = null): array {
         return (new CollectRelayBucket(
             new PdoRelayRuntimeRepository(Database::getInstance()),
-            static fn(array $vehicle, int $window, int $limit, string $stream, array $allowed, ?WialonAPI $source): array =>
+            static fn(Vehicle $vehicle, int $window, int $limit, string $stream, array $allowed, ?WialonAPI $source): array =>
                 self::collect($vehicle, $window, $limit, $stream, $allowed, $source),
-            $sourceFactory ?? static fn(array $vehicle): null => null,
+            $sourceFactory ?? static fn(Vehicle $vehicle): null => null,
             static fn(string $channel, array $context): mixed => Logger::warn($channel, $context),
         ))->run($bucket);
     }
@@ -144,7 +161,7 @@ final class RelayRuntime {
         if (Schema::config('scheduler_enabled', '1') !== '1' || Schema::config('event_engine_enabled', '1') !== '1') return $stats;
         return (new CollectRelayEventCycle(
             new PdoRelayRuntimeRepository(Database::getInstance()),
-            static fn(array $vehicle, int $window, int $limit, string $stream, array $allowed): array =>
+            static fn(Vehicle $vehicle, int $window, int $limit, string $stream, array $allowed): array =>
                 self::collect($vehicle, $window, $limit, $stream, $allowed),
             static fn(string $channel, array $context): mixed => Logger::warn($channel, $context),
         ))->run(
@@ -181,7 +198,7 @@ final class RelayRuntime {
         if ($transport === null) return 0;
         $activeUnit = null;
         $activeVehicle = null;
-        $findVehicle = static function (string $unit) use (&$activeUnit, &$activeVehicle): ?array {
+        $findVehicle = static function (string $unit) use (&$activeUnit, &$activeVehicle): ?Vehicle {
             if ($activeUnit !== $unit) {
                 $activeUnit = $unit;
                 $unitVehicleId = RelayIdentityPolicy::unitVehicleId($unit);
@@ -200,7 +217,7 @@ final class RelayRuntime {
                 try {
                     $vehicle = $findVehicle($unit);
                     if (!$vehicle) return 'empty';
-                    $settings = self::settingsOrNull((int) $vehicle['id']);
+                    $settings = self::settingsOrNull(self::vehicleId($vehicle));
                     if ($settings === null) return 'empty';
                     return self::queue($settings)->deliver(
                         $unit,
@@ -216,8 +233,8 @@ final class RelayRuntime {
             static function (string $unit, array $pending) use ($findVehicle): bool {
                 $vehicle = $findVehicle($unit);
                 if (!$vehicle) return false;
-                $enabled = self::ingestionSettings()->enabledActivities((int) $vehicle['id']);
-                $allowed = self::allowed((int) $vehicle['id']);
+                $enabled = self::ingestionSettings()->enabledActivities(self::vehicleId($vehicle));
+                $allowed = self::allowed(self::vehicleId($vehicle));
                 if (str_ends_with($unit, ':events') && Schema::config('event_engine_enabled', '1') === '1') {
                     $allowed = self::repository()->enabledEventActivityIds();
                 }
@@ -248,8 +265,8 @@ final class RelayRuntime {
     }
 
     /** Preserve manual submission as durable intent, never a direct network bypass. */
-    public static function queuePayload(array $vehicle, array $payload, ?array $sourceEvidence=null): array {
-        $settings = self::settings((int) $vehicle['id']);
+    public static function queuePayload(Vehicle $vehicle, array $payload, ?array $sourceEvidence=null): array {
+        $settings = self::settings(self::vehicleId($vehicle));
         return (new \Latra\Application\Collection\QueueManualRelayPayload(
             self::queue($settings), $settings->maxBytes,
         ))->queue($vehicle, $payload, $sourceEvidence);

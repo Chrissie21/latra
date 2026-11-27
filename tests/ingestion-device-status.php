@@ -9,6 +9,7 @@ use Latra\Application\DeviceStatus\DeviceStatusClock;
 use Latra\Application\DeviceStatus\DeviceStatusRepository;
 use Latra\Application\DeviceStatus\UpdateDeviceStatus;
 use Latra\Domain\Ingestion\DeviceStatusPolicy;
+use Latra\Infrastructure\Wialon\WialonSignalReader;
 
 final class DeviceStatusTrace
 {
@@ -77,12 +78,13 @@ final class DeviceStatusClockStub implements DeviceStatusClock
     }
 }
 
-$evaluation = DeviceStatusPolicy::evaluate([
+$reader = new WialonSignalReader();
+$evaluation = DeviceStatusPolicy::evaluate($reader->readDeviceStatus([
     'pwr_ext' => 0.9,
     'pwr_int' => 3.1,
     'battery' => 0.1,
     'io_8' => 1,
-], [
+]), [
     'is_online' => 0,
     'internal_battery_low' => 0,
     'external_power_disconnected' => 0,
@@ -105,12 +107,12 @@ if ($evaluation !== [
     throw new RuntimeException('Device low-power/tamper transitions changed: ' . json_encode($evaluation));
 }
 
-$unchanged = DeviceStatusPolicy::evaluate([
+$unchanged = DeviceStatusPolicy::evaluate($reader->readDeviceStatus([
     'ext_power' => 1.0,
     'battery_charge' => 3.2,
     'battery_pct' => 20,
     'tampering' => 0,
-], [
+]), [
     'is_online' => 1,
     'internal_battery_low' => 0,
     'external_power_disconnected' => 0,
@@ -129,7 +131,7 @@ if ($unchanged !== [
     throw new RuntimeException('Device thresholds must remain strict and unchanged');
 }
 
-$missing = DeviceStatusPolicy::evaluate([], []);
+$missing = DeviceStatusPolicy::evaluate($reader->readDeviceStatus([]), []);
 if ($missing['internal_battery_mv'] !== null || $missing['internal_battery_pct'] !== null
     || $missing['external_power_mv'] !== null || $missing['events'] !== []
     || $missing['changed'] !== false) {
@@ -139,7 +141,7 @@ if ($missing['internal_battery_mv'] !== null || $missing['internal_battery_pct']
 $trace = new DeviceStatusTrace();
 $repository = new DeviceStatusRepositoryStub($trace);
 $effects = new DeviceStatusEffectsStub($trace);
-$useCase = new UpdateDeviceStatus($repository, $effects, new DeviceStatusClockStub());
+$useCase = new UpdateDeviceStatus($repository, $effects, new DeviceStatusClockStub(), $reader);
 $useCase->execute(42, ['pwr_int' => 3.1], 1_800_000_000);
 if (count($repository->saved) !== 1 || $repository->saved[0][0] !== 'insert'
     || $repository->saved[0][1] !== 42
@@ -248,11 +250,11 @@ try {
     $sensitiveConfigScrubbed->setValue(null, $previousScrubState);
 }
 
-$cleared = DeviceStatusPolicy::evaluate([
+$cleared = DeviceStatusPolicy::evaluate($reader->readDeviceStatus([
     'pwr_ext' => 0,
     'pwr_int' => 0,
     'battery' => 100,
-], [
+]), [
     'is_online' => 1,
     'internal_battery_low' => 1,
     'external_power_disconnected' => 1,

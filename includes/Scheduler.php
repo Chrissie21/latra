@@ -65,7 +65,7 @@ class Scheduler {
     private static function polling(): \Latra\Application\Ingestion\PollScheduledVehicles {
         return new \Latra\Application\Ingestion\PollScheduledVehicles(
             new \Latra\Infrastructure\Persistence\PdoScheduledVehicleRepository(Database::getInstance()),
-            static fn(array $vehicle, int $window, int $limit): array => FleetSync::pollVehicle($vehicle, $window, $limit),
+            static fn(\Latra\Domain\Collection\Vehicle $vehicle, int $window, int $limit): array => FleetSync::pollVehicle($vehicle, $window, $limit),
             static fn(string $event, array $context) => Logger::warn($event, $context),
             static fn(bool $emergency): int => self::jobFlush($emergency),
         );
@@ -84,7 +84,7 @@ class Scheduler {
         return (new \Latra\Application\Ingestion\SubmitFuelReports(
             new \Latra\Infrastructure\Persistence\PdoFuelReportRepository(Database::getInstance()),
             new \Latra\Infrastructure\Wialon\WialonFuelReportSource(static fn(): WialonAPI => FleetSync::connector()),
-            static fn(array $vehicle, array $payload, ?array $evidence=null): array =>
+            static fn(\Latra\Domain\Collection\Vehicle $vehicle, array $payload, ?array $evidence=null): array =>
                 RelayRuntime::queuePayload($vehicle, $payload, $evidence),
             static function(string $event, array $context, bool $warning): void {
                 if ($warning) Logger::warn($event,$context); else Logger::info($event,$context);

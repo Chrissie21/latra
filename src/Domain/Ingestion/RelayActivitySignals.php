@@ -6,48 +6,49 @@ namespace Latra\Domain\Ingestion;
 /** Independent, explicitly named signals. Device IO interpretation remains profile-specific. */
 final class RelayActivitySignals
 {
+    /** Canonical strict evidence names per activity. */
     public const FLAGS = [
-        5 => ['harsh_braking', 'hard_braking'],
-        6 => ['harsh_turning', 'hard_turn'],
-        7 => ['harsh_acceleration', 'hard_acceleration'],
-        8 => ['panic', 'sos', 'panic_button'],
-        9 => ['battery_low', 'low_battery'],
-        10 => ['power_disconnected', 'ext_power_off'],
-        11 => ['excessive_idle', 'long_idle'],
-        12 => ['accident', 'crash'],
-        13 => ['passenger_panic', 'passenger_panic_button'],
-        14 => ['tamper', 'tampering', 'antenna_cut'],
-        15 => ['black_box', 'black_box_data'],
+        5 => ['harsh_braking'],
+        6 => ['harsh_turning'],
+        7 => ['harsh_acceleration'],
+        8 => ['panic'],
+        9 => ['battery_low'],
+        10 => ['power_disconnected'],
+        11 => ['excessive_idle'],
+        12 => ['accident'],
+        13 => ['passenger_panic'],
+        14 => ['tamper'],
+        15 => ['black_box'],
         16 => ['fuel_report'],
-        17 => ['invalid_scan', 'invalid_ibutton'],
+        17 => ['invalid_scan'],
         18 => ['engine_start'],
         19 => ['engine_stop'],
-        20 => ['boundary_enter', 'geofence_in', 'enter_zone'],
-        21 => ['boundary_exit', 'geofence_out', 'leave_zone'],
-        22 => ['checkpoint_enter', 'enter_checkpoint'],
-        23 => ['checkpoint_exit', 'leave_checkpoint'],
-        24 => ['ibutton', 'driver_scan', 'ibutton_scan'],
+        20 => ['boundary_enter'],
+        21 => ['boundary_exit'],
+        22 => ['checkpoint_enter'],
+        23 => ['checkpoint_exit'],
+        24 => ['ibutton'],
     ];
 
     /** @return array<int,true> */
-    public static function detect(array $params): array
+    public static function detect(TelemetrySignals $signals): array
     {
         $activities = [];
-        foreach (self::FLAGS as $id => $keys) {
-            foreach ($keys as $key) {
-                if (in_array($params[$key] ?? null, [1, '1', true], true)) {
+        foreach (self::FLAGS as $id => $names) {
+            foreach ($names as $name) {
+                if ($signals->strictFlag($name)) {
                     $activities[$id] = true;
                     break;
                 }
             }
         }
-        $event = strtolower(trim((string) ($params['event'] ?? '')));
-        if (isset(ActivityDetectionPolicy::EVENT_MAP[$event])) {
+        $event = $signals->eventKey();
+        if ($event !== null) {
             $activities[ActivityDetectionPolicy::EVENT_MAP[$event]] = true;
         }
         // A zero fuel measurement is still a measurement, unlike an inactive flag.
-        foreach (['fuel', 'fuel_level'] as $key) {
-            if (isset($params[$key]) && is_numeric($params[$key])) $activities[16] = true;
+        if ($signals->fuelMeasured()) {
+            $activities[ActivityDetectionPolicy::FUEL_REPORT] = true;
         }
         return $activities;
     }

@@ -3,6 +3,8 @@ declare(strict_types=1);
 
 namespace Latra\Application\Operations;
 
+use Latra\Domain\Collection\Vehicle;
+
 /** Operator mutations and health reads that the API boundary dispatches to. */
 interface OperatorActionRepository
 {
@@ -10,7 +12,7 @@ interface OperatorActionRepository
     public function messageForRelay(int $messageId): ?array;
     /** Message joined with its owning vehicle, shaped for operator payload submission. */
     public function messageForSubmission(int $messageId): ?array;
-    public function vehicle(int $vehicleId): ?array;
+    public function vehicle(int $vehicleId): ?Vehicle;
     public function latestMessage(int $vehicleId): ?array;
     public function pushLog(int $id): ?array;
     public function deletePushLog(int $id): void;

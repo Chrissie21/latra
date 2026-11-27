@@ -56,9 +56,9 @@ final class ActivityDetectionPolicy
         'ibutton' => 24, 'driver_scan' => 24, 'ibutton_scan' => 24,
     ];
 
-    public static function detect(array $params, array $previousState = [], array $context = []): array
+    public static function detect(TelemetrySignals $signals, array $previousState = [], array $context = []): array
     {
-        $speed = isset($context['speed']) ? (float) $context['speed'] : (float) ($params['speed'] ?? 0);
+        $speed = $signals->speedKmh() ?? 0.0;
         $enabled = $context['activity_enabled'] ?? [];
         $check = static function (int $id, string $reason, ?string $eventType = null) use ($enabled): ?array {
             if ($enabled && isset($enabled[$id]) && !$enabled[$id]) {
@@ -67,8 +67,8 @@ final class ActivityDetectionPolicy
             return ['activity_id' => $id, 'reason' => $reason, 'event_type' => $eventType];
         };
 
-        $eventName = strtolower((string) ($params['event'] ?? ''));
-        if ($eventName !== '') {
+        $eventName = $signals->eventName();
+        if ($eventName !== null && $eventName !== '') {
             foreach (self::EVENT_MAP as $key => $activityId) {
                 if (strpos($eventName, $key) !== false) {
                     $hit = $check($activityId, "Wialon event '$eventName'", $key);
@@ -79,13 +79,13 @@ final class ActivityDetectionPolicy
             }
         }
 
-        if (self::flagOn($params, ['panic', 'sos', 'alarm', 'io_104'])) {
+        if ($signals->looseFlag('panic_driver')) {
             $hit = $check(self::PANIC_DRIVER, 'Panic button (driver) triggered', 'panic_driver');
             if ($hit !== null) {
                 return $hit;
             }
         }
-        if (self::flagOn($params, ['passenger_panic', 'io_105'])) {
+        if ($signals->looseFlag('panic_passenger')) {
             $hit = $check(self::PANIC_PASSENGER, 'Panic button (passenger) triggered', 'panic_passenger');
             if ($hit !== null) {
                 return $hit;
@@ -100,7 +100,7 @@ final class ActivityDetectionPolicy
             }
         }
 
-        $gForce = self::gForce($params);
+        $gForce = $signals->gForce();
         if ($gForce !== null) {
             if ($gForce < -0.45) {
                 $hit = $check(self::HASH_BRAKING, "Braking g-force $gForce", 'harsh_braking');
@@ -122,7 +122,7 @@ final class ActivityDetectionPolicy
             }
         }
 
-        $ignition = self::engineState($params, $context['engine_param'] ?? null);
+        $ignition = $signals->detectorEngineOn();
         $previousEngine = $previousState['engine_status'] ?? null;
         if ($ignition !== null) {
             $newState = $ignition ? 'on' : 'off';
@@ -140,57 +140,56 @@ final class ActivityDetectionPolicy
             }
         }
 
-        if (self::flagOn($params, ['battery_low', 'low_battery'])) {
+        if ($signals->looseFlag('battery_low')) {
             $hit = $check(self::BATTERY_LOW, 'Internal battery low', 'battery_low');
             if ($hit !== null) {
                 return $hit;
             }
         }
-        $powerFlag = self::flagOn($params, ['power_disconnected', 'ext_power_off', 'io_66_power_loss']);
+        $powerFlag = $signals->looseFlag('power_disconnected');
         if ($powerFlag === true) {
             $hit = $check(self::POWER_DISC, 'External power disconnected (flag)', 'power_disconnected');
             if ($hit !== null) {
                 return $hit;
             }
-        } elseif ($powerFlag === null && self::externalPowerState($params) === false) {
+        } elseif ($powerFlag === null && $signals->externalPowerPresent() === false) {
             $hit = $check(self::POWER_DISC, 'External power disconnected (voltage lost)', 'power_disconnected');
             if ($hit !== null) {
                 return $hit;
             }
         }
-        if (self::flagOn($params, ['tamper', 'tampering', 'antenna_cut', 'io_8'])) {
+        if ($signals->looseFlag('tamper')) {
             $hit = $check(self::TAMPERING, 'Device tampering detected', 'tampering');
             if ($hit !== null) {
                 return $hit;
             }
         }
 
-        if (isset($params['pass']) || isset($params['tco_driver1_id'])
-            || self::flagOn($params, ['ibutton', 'driver_scan'])) {
+        if ($signals->driverPresent() || $signals->looseFlag('ibutton')) {
             $hit = $check(self::IBUTTON_REGULAR, 'iButton driver scan', 'ibutton');
             if ($hit !== null) {
                 return $hit;
             }
         }
-        if (isset($params['invalid_scan']) || self::flagOn($params, ['invalid_ibutton', 'io_123'])) {
+        if ($signals->invalidScanPresent() || $signals->looseFlag('invalid_scan')) {
             $hit = $check(self::INVALID_SCAN, 'Invalid iButton scan', 'invalid_scan');
             if ($hit !== null) {
                 return $hit;
             }
         }
-        if (isset($params['fuel']) || isset($params['fuel_level']) || self::flagOn($params, ['fuel_report'])) {
+        if ($signals->fuelPresent() || $signals->looseFlag('fuel_report')) {
             $hit = $check(self::FUEL_REPORT, 'Fuel data report', 'fuel');
             if ($hit !== null) {
                 return $hit;
             }
         }
-        if (self::flagOn($params, ['black_box', 'io_335'])) {
+        if ($signals->looseFlag('black_box')) {
             $hit = $check(self::BLACK_BOX, 'Black box data logging', 'black_box');
             if ($hit !== null) {
                 return $hit;
             }
         }
-        if (self::flagOn($params, ['accident', 'crash', 'io_233'])) {
+        if ($signals->looseFlag('accident')) {
             $hit = $check(self::ACCIDENT, 'Accident detected', 'accident');
             if ($hit !== null) {
                 return $hit;
@@ -218,66 +217,5 @@ final class ActivityDetectionPolicy
 
         return $check(self::MOVEMENT, 'Movement/Logging', 'movement')
             ?? ['activity_id' => self::MOVEMENT, 'reason' => 'Movement/Logging', 'event_type' => 'movement'];
-    }
-
-    public static function flagOn(array $params, array $keys): ?bool
-    {
-        foreach ($keys as $key) {
-            if (strpos((string) $key, ':') !== false) {
-                [$parameter, $bit] = explode(':', (string) $key, 2);
-                if (array_key_exists($parameter, $params) && is_numeric($bit)) {
-                    $value = (int) $params[$parameter];
-                    return ((int) floor($value / (1 << (int) $bit))) % 2 === 1;
-                }
-                continue;
-            }
-            if (array_key_exists($key, $params)) {
-                $value = $params[$key];
-                return $value !== 0 && $value !== '0' && $value !== false;
-            }
-        }
-        return null;
-    }
-
-    public static function engineState(array $params, ?string $engineParam = null): ?bool
-    {
-        if (is_string($engineParam) && trim($engineParam) !== '') {
-            $engineParam = trim($engineParam);
-            if (preg_match('/^[^:]+:\d+$/', $engineParam)) {
-                return self::flagOn($params, [$engineParam]);
-            }
-            if (array_key_exists($engineParam, $params)) {
-                $value = $params[$engineParam];
-                return $value !== 0 && $value !== '0' && $value !== false;
-            }
-        }
-        return self::flagOn($params, ['ignition', 'io_5', 'io_239', 'ignit', 'engine_on', 'io_69']);
-    }
-
-    public static function externalPowerState(array $params): ?bool
-    {
-        foreach (['io_66', 'pwr_ext', 'ext_voltage', 'io_66_power'] as $key) {
-            if (isset($params[$key]) && is_numeric($params[$key])) {
-                return (float) $params[$key] > 0;
-            }
-        }
-        return null;
-    }
-
-    private static function gForce(array $params): ?float
-    {
-        if (isset($params['ho']) && is_numeric($params['ho'])) {
-            return (float) $params['ho'];
-        }
-        foreach (['io_79', 'io_80'] as $key) {
-            if (isset($params[$key]) && is_numeric($params[$key])) {
-                $raw = (int) $params[$key];
-                if ($raw > 0x7FFFFFFF) {
-                    $raw -= 0x100000000;
-                }
-                return $raw / 1000.0;
-            }
-        }
-        return null;
     }
 }

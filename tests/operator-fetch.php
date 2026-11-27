@@ -4,12 +4,14 @@ if (PHP_SAPI !== 'cli') exit(1);
 require __DIR__.'/../includes/autoload.php';
 use Latra\Application\Operations\OperatorReadRepository;
 use Latra\Application\Operations\FetchOperatorMessages;
+use Latra\Domain\Collection\Vehicle;
+use Latra\Infrastructure\Persistence\VehicleRowDecoder;
 function fetchAssert(bool $ok,string $why): void { if (!$ok) throw new RuntimeException($why); }
 $repo=new class implements OperatorReadRepository {
     public array $lookups=[];
-    public function vehicle(int $id): ?array {
+    public function vehicle(int $id): ?Vehicle {
         $this->lookups[]=$id;
-        return $id===1 ? ['id'=>1,'vehicle_reg_no'=>'SYNTHETIC','wialon_unit_id'=>123] : null;
+        return $id===1 ? VehicleRowDecoder::decode(['id'=>1,'vehicle_reg_no'=>'SYNTHETIC','wialon_unit_id'=>123]) : null;
     }
     public function device(int $id): ?array { return null; }
     public function latestMessageWithIdentity(int $id): ?array { return null; }
@@ -19,8 +21,8 @@ $repo=new class implements OperatorReadRepository {
     public function offlineSeconds(): int { return 900; }
 };
 $polls=[];
-$poll=static function(array $vehicle,int $window,int $limit) use (&$polls): array {
-    $polls[]=[$vehicle['id'],$window,$limit];
+$poll=static function(Vehicle $vehicle,int $window,int $limit) use (&$polls): array {
+    $polls[]=[$vehicle->id,$window,$limit];
     return ['fetched'=>3,'rejected'=>1,'inserted'=>2,'queued'=>3];
 };
 $fetch=new FetchOperatorMessages($repo,$poll);
@@ -41,7 +43,7 @@ fetchAssert(array_column($events,'type')===['init','progress','progress','done']
     'Bulk relay progress or independent missing-vehicle handling changed');
 fetchAssert($polls===[[1,86400,100],[1,86400,100]],'Bulk fetch used different bounds');
 
-$failing=new FetchOperatorMessages($repo,static function(array $vehicle,int $window,int $limit): array {
+$failing=new FetchOperatorMessages($repo,static function(Vehicle $vehicle,int $window,int $limit): array {
     throw new RuntimeException('synthetic collection failure');
 });
 $events=[];

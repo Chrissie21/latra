@@ -21,10 +21,10 @@ class RelayRuntime {
 }
 
 class LatraMapper {
-    public static function buildPayload(array $vehicle, array $source, int $activityId): array {
+    public static function buildPayload(\Latra\Domain\Collection\Vehicle $vehicle, array $source, int $activityId): array {
         return [
-            'vehicle_reg_no' => $vehicle['vehicle_reg_no'],
-            'imei' => $vehicle['imei'],
+            'vehicle_reg_no' => $vehicle->vehicle_reg_no,
+            'imei' => $vehicle->imei,
             'items' => [['activity_id' => (string) $activityId]],
         ];
     }

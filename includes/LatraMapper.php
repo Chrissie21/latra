@@ -1,5 +1,6 @@
 <?php
 /** Builds LATRA payloads and trip-stat data. */
+use Latra\Domain\Collection\Vehicle;
 use Latra\Domain\Ingestion\LatraPayloadPolicy;
 
 require_once __DIR__ . '/autoload.php';
@@ -35,39 +36,38 @@ class LatraMapper
 
     public static function mapVehicle(array $wialonUnit): array
     {
-        return LatraPayloadPolicy::mapVehicle($wialonUnit);
+        return (new \Latra\Infrastructure\Wialon\WialonSourceReader())->unitFields($wialonUnit);
     }
 
     public static function buildPayload(
-        array $vehicle,
+        Vehicle $vehicle,
         array $message,
         int $activityId,
         array $addonInfo = [],
         array $fuelInfo = [],
     ): array {
-        return LatraPayloadPolicy::buildPayload($vehicle, $message, $activityId, $addonInfo, $fuelInfo);
+        return LatraPayloadPolicy::buildPayload(
+            $vehicle,
+            \Latra\Domain\Ingestion\TelemetryMessage::fromStored($message),
+            $activityId,
+            $addonInfo,
+            $fuelInfo,
+        )->toWire();
     }
 
     public static function buildAddonInfo(int $activityId, array $wialonParams = [], array $customData = []): ?array
     {
         return (new \Latra\Application\Ingestion\BuildActivityAddon(
             static fn(string $event, array $context) => Logger::info($event, $context),
-        ))->build($activityId, $wialonParams, $customData);
+        ))->build($activityId, (new \Latra\Infrastructure\Wialon\WialonSourceReader())->decodeParameters($wialonParams), $customData);
     }
 
     public static function buildFuelInfo(array $wialonParams = [], array $customData = []): array
     {
-        return LatraPayloadPolicy::buildFuelInfo($wialonParams, $customData);
-    }
-
-    public static function detectActivity(array $wialonParams, array $previousState = []): int
-    {
-        return LatraPayloadPolicy::detectActivity($wialonParams, $previousState);
-    }
-
-    public static function toEpochMs($timestamp): string
-    {
-        return LatraPayloadPolicy::toEpochMs($timestamp);
+        return LatraPayloadPolicy::buildFuelInfo(
+            (new \Latra\Infrastructure\Wialon\WialonSourceReader())->decodeFuelEvidence($wialonParams),
+            $customData,
+        );
     }
 
     public static function activityRequiresAddon(int $activityId): bool
@@ -85,11 +85,6 @@ class LatraMapper
         return (new \Latra\Application\Ingestion\BuildTripStatistics(
             new \Latra\Infrastructure\Persistence\PdoTripStatisticsRepository(Database::getInstance()),
         ))->build($vehicleId, $engineOffMsgTime);
-    }
-
-    public static function haversineKm(float $lat1, float $lng1, float $lat2, float $lng2): float
-    {
-        return LatraPayloadPolicy::haversineKm($lat1, $lng1, $lat2, $lng2);
     }
 
     public static function validatePayload(array $payload): array

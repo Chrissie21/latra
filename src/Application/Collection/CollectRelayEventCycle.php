@@ -40,7 +40,7 @@ final class CollectRelayEventCycle
             } catch (Throwable $error) {
                 $stats['failed']++;
                 ($this->warn)('relay.events', [
-                    'vehicle' => (int) $vehicle['id'],
+                    'vehicle' => $vehicle->id,
                     'error' => $error->getMessage(),
                 ]);
             }

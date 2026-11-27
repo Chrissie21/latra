@@ -5,6 +5,7 @@ namespace Latra\Infrastructure\Wialon;
 
 use Closure;
 use Latra\Application\Ingestion\FuelReportSource;
+use Latra\Domain\Ingestion\TelemetryMessage;
 
 final class WialonFuelReportSource implements FuelReportSource
 {
@@ -16,10 +17,10 @@ final class WialonFuelReportSource implements FuelReportSource
         $this->client=($this->createClient)();
         return $this->client->login();
     }
-    public function read(int $unitId): ?array
+    public function read(int $unitId): ?TelemetryMessage
     {
         if ($this->client === null) throw new \LogicException('Fuel source is not open');
-        return $this->client->getUnitData($unitId);
+        return (new WialonSourceReader())->decodeUnitData($this->client->getUnitData($unitId));
     }
     public function close(): void { $this->client?->logout(); }
 }

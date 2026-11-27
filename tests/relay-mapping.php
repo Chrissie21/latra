@@ -4,6 +4,9 @@ require_once __DIR__.'/vts-fixtures.php';
 require_once __DIR__ . '/bootstrap.php';
 require_once __DIR__ . '/../includes/autoload.php';
 use Latra\Application\Collection\RelayPayloadMapper as RelayMapper;
+use Latra\Domain\Collection\Vehicle;
+use Latra\Infrastructure\Wialon\WialonSignalReader;
+use Latra\Infrastructure\Wialon\WialonSourceReader;
 foreach (['ParamResolver', 'LatraMapper',
     'WialonAPI'] as $class) require_once __DIR__ . '/../includes/' . $class . '.php';
 $db = testDatabase(); fixture($db);
@@ -12,8 +15,8 @@ function rejects(callable $action): void {
     try { $action(); } catch (Throwable $error) { return; }
     throw new RuntimeException('Expected rejection');
 }
-$vehicle = ['id' => 1, 'wialon_unit_id' => 123, 'imei' => '123456789012345',
-    'vehicle_reg_no' => 'SYNTHETIC', 'engine_param' => 'io_239'];
+$vehicle = new Vehicle(id: 1, wialon_unit_id: 123, imei: '123456789012345',
+    vehicle_reg_no: 'SYNTHETIC', engine_param: 'io_239');
 $now = time() - 60;
 function source(array $params = [], int $offset = 0): array {
     global $now;
@@ -22,7 +25,8 @@ function source(array $params = [], int $offset = 0): array {
 function ids(array $mapped): array { return array_map('intval', array_column($mapped['payload']['items'], 'activity_id')); }
 function mapper(array $enabled = [], string $profile = 'teltonika-fmb', int $batteryLow = 3200): RelayMapper {
     global $vehicle;
-    return new RelayMapper($vehicle, $enabled ?: array_fill_keys(range(1, 24), true), range(1, 24), 80, 2, $batteryLow, $profile);
+    return new RelayMapper($vehicle, $enabled ?: array_fill_keys(range(1, 24), true), range(1, 24), 80, 2, $batteryLow, $profile,
+        new WialonSignalReader(), new WialonSourceReader());
 }
 $map = mapper();
 foreach ([1 => 7, 2 => 5, 3 => 6] as $code => $id) {
@@ -52,10 +56,10 @@ verify(in_array('items[0].fuel_info is required for activity 16', LatraMapper::v
     'Activity 16 accepted a missing fuel_info block');
 $disabled = array_fill_keys(range(1, 24), false); $disabled[1] = true;
 verify(ids(mapper($disabled)->map(source(['io_253' => 2, 'io_252' => 1]), [])) === [1], 'Disabled activity queued');
-$notAllowed = new RelayMapper($vehicle, array_fill_keys(range(1, 24), true), [1], 80, 2, 3200, 'teltonika-fmb');
+$notAllowed = new RelayMapper($vehicle, array_fill_keys(range(1, 24), true), [1], 80, 2, 3200, 'teltonika-fmb', new WialonSignalReader(), new WialonSourceReader());
 verify(ids($notAllowed->map(source(['io_253' => 2]), [])) === [1], 'Bucket eligibility bypassed');
 echo "PASS eight signals, simultaneous activities, voltage units/null/zero, profile and eligibility\n";
-$cooled = new RelayMapper($vehicle, [1 => false, 5 => true], [5], 80, 2, 3200, 'teltonika-fmb', 300);
+$cooled = new RelayMapper($vehicle, [1 => false, 5 => true], [5], 80, 2, 3200, 'teltonika-fmb', new WialonSignalReader(), new WialonSourceReader(), 300);
 $episode = $cooled->map(source(['io_253' => 2]), []);
 verify(($cooled->map(source(['io_253' => 2], 1), $episode['state'])['suppressed'] ?? false) === true,
     'Configured momentary-event cooldown was lost');
@@ -79,8 +83,8 @@ verify(in_array(4, ids($map->map($withoutAddon, $one['state'])), true), 'Speedin
 verify(in_array(13, ids($map->map(source(['event' => 'passenger_panic']), [])), true), 'Passenger panic misclassified');
 rejects(static fn() => $map->map(source(['io_66' => 'broken']), []));
 $bad = source(); $bad['pos']['y'] = 'broken'; rejects(static fn() => $map->map($bad, []));
-$missing = $vehicle; $missing['imei'] = null;
-rejects(static fn() => (new RelayMapper($missing, [1 => true], [1], 80, 2, 3200, 'generic'))->map(source(), []));
+$missing = new Vehicle(id: 1, imei: null, vehicle_reg_no: 'SYNTHETIC', engine_param: 'io_239');
+rejects(static fn() => (new RelayMapper($missing, [1 => true], [1], 80, 2, 3200, 'generic', new WialonSignalReader(), new WialonSourceReader()))->map(source(), []));
 echo "PASS ignition/trip state, consecutive overspeed, panic identity and invalid-source rejection\n";
 
 class WindowSource extends WialonAPI {

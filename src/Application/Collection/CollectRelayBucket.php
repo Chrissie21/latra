@@ -61,7 +61,7 @@ final class CollectRelayBucket
             } catch (Throwable $error) {
                 $stats['failed']++;
                 ($this->warn)('relay.bucket', [
-                    'vehicle' => (int) $vehicle['id'],
+                    'vehicle' => $vehicle->id,
                     'error' => $error->getMessage(),
                 ]);
             }

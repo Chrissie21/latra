@@ -11,25 +11,29 @@ class RelayRuntime {
     public static array $queuedPayloads = [];
     public static function enabled(): bool { return true; }
     public static function queueForVehicle(array $payload, ?int $vehicleId = null): array {
-        $vehicle = ['id' => 1, 'vehicle_reg_no' => 'SYNTHETIC', 'imei' => '123456789012345'];
-        if (($vehicleId !== null && $vehicleId !== $vehicle['id'])
-            || ($payload['vehicle_reg_no'] ?? null) !== $vehicle['vehicle_reg_no']
-            || ($payload['imei'] ?? null) !== $vehicle['imei']) {
+        $vehicle = new \Latra\Domain\Collection\Vehicle(
+            id: 1,
+            vehicle_reg_no: 'SYNTHETIC',
+            imei: '123456789012345',
+        );
+        if (($vehicleId !== null && $vehicleId !== $vehicle->id)
+            || ($payload['vehicle_reg_no'] ?? null) !== $vehicle->vehicle_reg_no
+            || ($payload['imei'] ?? null) !== $vehicle->imei) {
             throw new RuntimeException('Relay payload identity does not match the owning vehicle');
         }
         return self::queuePayload($vehicle, $payload);
     }
-    public static function queuePayload(array $vehicle, array $payload): array {
-        if (($payload['vehicle_reg_no'] ?? null) !== ($vehicle['vehicle_reg_no'] ?? null)
-            || ($payload['imei'] ?? null) !== ($vehicle['imei'] ?? null)) {
+    public static function queuePayload(\Latra\Domain\Collection\Vehicle $vehicle, array $payload): array {
+        if (($payload['vehicle_reg_no'] ?? null) !== $vehicle->vehicle_reg_no
+            || ($payload['imei'] ?? null) !== $vehicle->imei) {
             throw new RuntimeException('Relay payload identity does not match enrolled vehicle');
         }
         $errors = LatraMapper::validatePayload($payload);
         self::$queuedPayloads[] = [$vehicle, $payload];
         return ['success'=>!$errors,'review'=>(bool)$errors,'queued'=>1];
     }
-    public static function poll(array $vehicle, int $window, int $limit): array {
-        self::$calls[] = ['poll', $vehicle['id'], $window, $limit];
+    public static function poll(\Latra\Domain\Collection\Vehicle $vehicle, int $window, int $limit): array {
+        self::$calls[] = ['poll', $vehicle->id, $window, $limit];
         return ['inserted' => 2, 'rejected' => 0, 'skipped' => 0];
     }
     public static function bucket(array $bucket): array { self::$calls[] = ['bucket', $bucket['id']]; return ['pushed' => 0, 'inserted' => 2]; }
@@ -85,7 +89,8 @@ class Logger {
     public static function info(...$args): void {}
     public static function warn(...$args): void {}
 }
-expect(FleetSync::pollVehicle(['id' => 1], 180, 80)['inserted'] === 2, 'Scheduled polling bypassed the relay');
+expect(FleetSync::pollVehicle(new \Latra\Domain\Collection\Vehicle(id: 1, wialon_unit_id: 123), 180, 80)['inserted'] === 2,
+    'Scheduled polling bypassed the relay');
 expect(BucketRunner::run(['id' => 4])['inserted'] === 2, 'Bucket entered retained-source pipeline');
 expect(RelayRuntime::cycle()['vehicles'] === 1, 'Event engine entered retained-source pipeline');
 $flush = new ReflectionMethod(Scheduler::class, 'jobFlush');
@@ -134,9 +139,12 @@ $emergencyMismatch = EmergencyHandler::pushPayload([
 expect(!$emergencyMismatch['ok'] && str_contains($emergencyMismatch['response'], 'owning vehicle'),
     'Emergency queueing accepted a payload whose identity was not the owning vehicle');
 $emergencyPayload = \Latra\Domain\Ingestion\LatraPayloadPolicy::buildPayload(
-    ['vehicle_reg_no'=>'SYNTHETIC','imei'=>'123456789012345'],
-    vtsTestMessage(['lat'=>-6.8,'lng'=>39.2,'wialon_msg_time'=>time()]), 8,
-);
+    new \Latra\Domain\Collection\Vehicle(vehicle_reg_no: 'SYNTHETIC', imei: '123456789012345'),
+    \Latra\Domain\Ingestion\TelemetryMessage::fromStored(
+        vtsTestMessage(['lat'=>-6.8,'lng'=>39.2,'wialon_msg_time'=>time()]),
+    ),
+    8,
+)->toWire();
 $emergencyOk = EmergencyHandler::pushPayload($emergencyPayload, 1);
 expect($emergencyOk['ok'] === true && ($emergencyOk['queued'] ?? 0) === 1,
     'Emergency queueing rejected a valid payload for the owning vehicle');

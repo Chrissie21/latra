@@ -40,12 +40,12 @@ class IngestionPolicyDatabase
 }
 class_alias(IngestionPolicyDatabase::class, 'Database');
 
-$vehicle = [
-    'id' => 42,
-    'hw_type' => 'FMB920',
-    'imei' => '123456789012345',
-    'vehicle_reg_no' => 'SYNTHETIC',
-];
+$vehicle = new \Latra\Domain\Collection\Vehicle(
+    id: 42,
+    hw_type: 'FMB920',
+    imei: '123456789012345',
+    vehicle_reg_no: 'SYNTHETIC',
+);
 $sourceTime = time() - 60;
 $source = [
     't' => $sourceTime,
@@ -63,47 +63,48 @@ $source = [
         'mcc' => 0,
     ],
 ];
-$normalized = \Latra\Domain\Ingestion\WialonMessageNormalizationPolicy::normalize(
-    $vehicle, $source, ParamResolver::resolve($source['p'], $vehicle['hw_type']),
-);
-if ($normalized['lat'] !== -6.12345679 || $normalized['lng'] !== 39.12345679
-    || $normalized['speed'] !== 0.0 || $normalized['d2d3'] !== null
-    || $normalized['battery_pct'] !== 50.0 || $normalized['battery_mv'] !== null
-    || $normalized['odometer'] !== 0.0 || $normalized['driver_id'] !== 'driver-7'
-    || $normalized['canonical_params']['pwr_ext'] !== 0
-    || \Latra\Domain\Ingestion\WialonMessageNormalizationPolicy::toMv('12.5') !== 12500.0
-    || \Latra\Domain\Ingestion\WialonMessageNormalizationPolicy::toPct('150') !== 100.0) {
-    throw new RuntimeException('Normalization policy changed canonical data or zero handling');
+$sourceReader = new \Latra\Infrastructure\Wialon\WialonSourceReader();
+$normalized = $sourceReader->decodeMessage($vehicle, $source, ParamResolver::enabledAliases());
+if ($normalized->latitude !== -6.12345679 || $normalized->longitude !== 39.12345679
+    || $normalized->speedKmh !== 0.0 || $normalized->fixMode !== null
+    || $normalized->batteryPct !== 50.0 || $normalized->batteryMv !== null
+    || $normalized->odometerKm !== 0.0 || $normalized->driverId !== 'driver-7'
+    || $normalized->signalParameters['pwr_ext'] !== 0
+    || $sourceReader->decodeParameters(['pwr_int' => 12.5])->batteryMv !== 12500.0
+    || $sourceReader->decodeParameters(['battery' => 150])->batteryPct !== 100.0) {
+    throw new RuntimeException('Source decoding changed canonical data or zero handling');
 }
 
-$valid = \Latra\Domain\Ingestion\GpsValidationPolicy::validate($normalized);
+$validationMessage = $normalized->toValidationArray($vehicle->imei, $vehicle->vehicle_reg_no);
+$valid = \Latra\Domain\Ingestion\GpsValidationPolicy::validate($validationMessage);
 if (!$valid['valid'] || \Latra\Domain\Ingestion\GpsValidationPolicy::statusOf($valid) !== 'valid') {
-    throw new RuntimeException('Valid normalized message failed domain validation');
+    throw new RuntimeException('Valid decoded message failed domain validation');
 }
-$invalid = \Latra\Domain\Ingestion\GpsValidationPolicy::validate(array_replace($normalized, ['lat' => 91, 'bearing' => 360]));
+$invalid = \Latra\Domain\Ingestion\GpsValidationPolicy::validate(array_replace($validationMessage, ['lat' => 91, 'bearing' => 360]));
 if ($invalid['valid'] || \Latra\Domain\Ingestion\GpsValidationPolicy::statusOf($invalid) !== 'failed'
     || array_column($invalid['errors'], 'field') !== ['lat', 'bearing']) {
     throw new RuntimeException('GPS validation ranges or error ordering changed');
 }
 
-$event = \Latra\Domain\Ingestion\ActivityDetectionPolicy::detect(['event' => 'battery_low']);
+$reader = new \Latra\Infrastructure\Wialon\WialonSignalReader();
+$event = \Latra\Domain\Ingestion\ActivityDetectionPolicy::detect($reader->readSource(['event' => 'battery_low']));
 if ($event['activity_id'] !== \Latra\Domain\Ingestion\ActivityDetectionPolicy::BATTERY_LOW
-    || \Latra\Domain\Ingestion\ActivityDetectionPolicy::engineState(['sensor' => 1], 'sensor') !== true
-    || \Latra\Domain\Ingestion\ActivityDetectionPolicy::flagOn(['status' => 2048], ['status:11']) !== true
-    || \Latra\Domain\Ingestion\ActivityDetectionPolicy::externalPowerState(['io_66' => 0]) !== false
+    || $reader->readSource(['sensor' => 1], 'sensor')->engineOn() !== true
+    || $reader->readSource(['status' => 2048], 'status:11')->engineOn() !== true
+    || $reader->readSource(['io_66' => 0])->externalPowerPresent() !== false
 ) {
     throw new RuntimeException('Activity detection policy behavior or compatibility constants changed');
 }
 $transition = \Latra\Domain\Ingestion\ActivityDetectionPolicy::detect(
-    ['io_239' => 1],
+    $reader->readSource(['io_239' => 1], 'io_239'),
     ['engine_status' => 'off'],
-    ['activity_enabled' => [\Latra\Domain\Ingestion\ActivityDetectionPolicy::ENGINE_ON => true], 'engine_param' => 'io_239'],
+    ['activity_enabled' => [\Latra\Domain\Ingestion\ActivityDetectionPolicy::ENGINE_ON => true]],
 );
 if ($transition['activity_id'] !== \Latra\Domain\Ingestion\ActivityDetectionPolicy::ENGINE_ON) {
     throw new RuntimeException('Engine transition decision changed');
 }
 
-$unit = \Latra\Domain\Ingestion\LatraPayloadPolicy::mapVehicle([
+$unit = $sourceReader->unitFields([
     'id' => 77,
     'nm' => 'unit-name',
     'uid' => '123456789012345',

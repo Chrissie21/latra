@@ -6,7 +6,10 @@ use Latra\Application\Operations\OperatorReadRepository;
 /** Uses the shared database connection API without exposing SQL to operator use cases. */
 final class DatabaseOperatorReadRepository implements OperatorReadRepository, \Latra\Application\Operations\OperatorPayloadRepository
 {
-    public function vehicle(int $id): ?array { return \Database::fetch('SELECT * FROM vehicles WHERE id = ?',[$id]); }
+    public function vehicle(int $id): ?\Latra\Domain\Collection\Vehicle {
+        $row = \Database::fetch('SELECT * FROM vehicles WHERE id = ?', [$id]);
+        return $row === null ? null : VehicleRowDecoder::decode($row);
+    }
     public function device(int $id): ?array { return \Database::fetch('SELECT * FROM device_status WHERE vehicle_id = ?',[$id]); }
     public function latestMessageWithIdentity(int $id): ?array {
         return \Database::fetch('SELECT m.*,v.vehicle_reg_no FROM message_log m JOIN vehicles v ON v.id=m.vehicle_id WHERE m.vehicle_id=? ORDER BY m.wialon_msg_time DESC LIMIT 1',[$id]);

@@ -155,13 +155,16 @@ echo "PASS IDD rev 1.14 contract accepts all 24 activity shapes and rejects malf
 // it; tests/latra-vts-batching.php covers assembly, retention and recovery.
 require __DIR__ . '/../includes/autoload.php';
 
-$vehicle = ['vehicle_reg_no' => 'T123ABC', 'imei' => '100000000004000'];
+$vehicle = new Latra\Domain\Collection\Vehicle(vehicle_reg_no: 'T123ABC', imei: '100000000004000');
+$sourceDecoder = new Latra\Infrastructure\Wialon\WialonSourceReader();
 $message = [
     'wialon_msg_time' => 1541603095967, 'lat' => -6.79124, 'lng' => 39.1, 'altitude' => 21,
     'speed' => 80, 'bearing' => 150, 'satellite_count' => 9, 'hdop' => 1, 'd2d3' => 3,
     'rssi' => 0, 'lac' => 123, 'cell_id' => 12345, 'mgs_id' => 12345, 'mcc' => 635,
 ];
-$current = Latra\Domain\Ingestion\LatraPayloadPolicy::buildPayload($vehicle, $message, 1);
+$current = Latra\Domain\Ingestion\LatraPayloadPolicy::buildPayload(
+    $vehicle, Latra\Domain\Ingestion\TelemetryMessage::fromStored($message), 1,
+)->toWire();
 $itemVerdict = latra_idd_validate($current, ['three_n' => false]);
 check($itemVerdict['errors'] === [],
     'application payload must satisfy the IDD item rules: ' . implode('; ', $itemVerdict['errors']));
@@ -177,34 +180,44 @@ check($batchVerdict['errors'] === ['items must contain 3*N data points (got 1)']
 
 // A message carrying nothing but a fix must still produce a conforming item.
 $sparse = Latra\Domain\Ingestion\LatraPayloadPolicy::buildPayload(
-    $vehicle, ['wialon_msg_time' => 1541603095967, 'lat' => -6.79124, 'lng' => 39.1], 1,
-);
+    $vehicle,
+    Latra\Domain\Ingestion\TelemetryMessage::fromStored(
+        ['wialon_msg_time' => 1541603095967, 'lat' => -6.79124, 'lng' => 39.1],
+    ),
+    1,
+)->toWire();
 $sparseVerdict = latra_idd_validate($sparse, ['three_n' => false]);
 check($sparseVerdict['errors'] !== [],
     'a fix-only message must still produce a conforming item: ' . implode('; ', $sparseVerdict['errors']));
 
 // Fuel units: millimetres as reported, tank temperature scaled by ten, no invented signal.
-$fuel = Latra\Domain\Ingestion\LatraPayloadPolicy::buildFuelInfo(
+$fuel = Latra\Domain\Ingestion\LatraPayloadPolicy::buildFuelInfo($sourceDecoder->decodeFuelEvidence(
     ['fuel_unit'=>'mm','fuel_level'=>2100,'rt_fuel'=>2134,'fuel_signal'=>75,'tank_temp'=>31.2,'fuel_valid_flag'=>0,'fuel_soft_status'=>0,'fuel_hard_fault'=>0],
-);
+));
 check($fuel['fuelLevel'] === '2100' && $fuel['rtFuelLevel'] === '2134' && $fuel['tankTemp'] === '312'
     && $fuel['signalLevel'] === '75' && $fuel['validFlag'] === '0',
     'fuel units must follow the IDD: millimetres, Celsius x 10, measured signal');
-$noSignal = Latra\Domain\Ingestion\LatraPayloadPolicy::buildFuelInfo(['fuel_level' => 2100]);
+$noSignal = Latra\Domain\Ingestion\LatraPayloadPolicy::buildFuelInfo(
+    $sourceDecoder->decodeFuelEvidence(['fuel_level' => 2100]),
+);
 check($noSignal['signalLevel'] === null && $noSignal['validFlag'] === null,
     'a missing signalLevel must not be invented as 75');
-$litres = Latra\Domain\Ingestion\LatraPayloadPolicy::buildFuelInfo(['fuel_level' => 50, 'unit' => 'l']);
+$litres = Latra\Domain\Ingestion\LatraPayloadPolicy::buildFuelInfo(
+    $sourceDecoder->decodeFuelEvidence(['fuel_level' => 50, 'unit' => 'l']),
+);
 check($litres['validFlag'] === null && $litres['fuelLevel'] === null,
     'a litre reading must not be labelled as millimetres');
-$fuelPayload = Latra\Domain\Ingestion\LatraPayloadPolicy::buildPayload($vehicle, $message, 16, [], $fuel);
+$fuelPayload = Latra\Domain\Ingestion\LatraPayloadPolicy::buildPayload(
+    $vehicle, Latra\Domain\Ingestion\TelemetryMessage::fromStored($message), 16, [], $fuel,
+)->toWire();
 check(latra_idd_validate($fuelPayload, ['three_n' => false])['errors'] === [],
     'activity 16 payload must conform');
 
 // d2d3 is a reported fix mode, never inferred from altitude or from the input-data flag.
-$mode = Latra\Domain\Ingestion\SatelliteModePolicy::class;
-check($mode::fromMessage(['z' => 210, 'f' => 2]) === null,
+check($sourceDecoder->decodeUnitData(['pos' => ['z' => 210, 'f' => 2]])?->fixMode === null,
     'altitude or the input-data flag must not claim a 3D fix');
-check($mode::fromMessage(['satellite_mode' => '3']) === 3 && $mode::fromMessage([], ['d2d3' => '2']) === 2,
+check($sourceDecoder->decodeUnitData(['pos' => ['satellite_mode' => '3']])?->fixMode === 3
+    && $sourceDecoder->decodeUnitData(['p' => ['d2d3' => '2']])?->fixMode === 2,
     'a reported fix mode must be honoured');
 
 echo "PASS application payload conforms to the IDD item rules (3*N enforced by durable delivery)\n";

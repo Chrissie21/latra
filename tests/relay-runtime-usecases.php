@@ -4,13 +4,21 @@ if (PHP_SAPI !== 'cli') {
 }
 require_once __DIR__ . '/../includes/autoload.php';
 
+use Latra\Domain\Collection\Vehicle;
+use Latra\Infrastructure\Persistence\VehicleRowDecoder;
+
 final class RuntimeUseCaseRepository implements \Latra\Application\Collection\RelayRuntimeRepository
 {
+    private array $bucketVehicles;
+    private array $eventVehicles;
+
     public function __construct(
-        private array $bucketVehicles = [],
-        private array $eventVehicles = [],
+        array $bucketVehicles = [],
+        array $eventVehicles = [],
         private array $eventActivities = [],
     ) {
+        $this->bucketVehicles = VehicleRowDecoder::rows($bucketVehicles);
+        $this->eventVehicles = VehicleRowDecoder::rows($eventVehicles);
     }
 
     public function activeVehiclesForBucket(int $bucketId): array
@@ -38,23 +46,23 @@ final class RuntimeUseCaseRepository implements \Latra\Application\Collection\Re
     public function relayStatus(string $unit): array { return ['streams' => [], 'queue' => []]; }
     public function allowedBucketActivities(int $vehicleId): array { return []; }
     public function pendingUnits(int $now, int $limit): array { return []; }
-    public function activeVehicleForUnit(int $unitId): ?array { return null; }
-    public function vehicle(int $vehicleId): ?array { return null; }
-    public function vehicleByIdentity(?string $vehicleRegNo, ?string $imei): ?array { return null; }
+    public function activeVehicleForUnit(int $unitId): ?Vehicle { return null; }
+    public function vehicle(int $vehicleId): ?Vehicle { return null; }
+    public function vehicleByIdentity(?string $vehicleRegNo, ?string $imei): ?Vehicle { return null; }
 }
 
 $warnings = [];
 $collected = [];
 $bucket = new \Latra\Application\Collection\CollectRelayBucket(
     new RuntimeUseCaseRepository([['id' => 1], ['id' => 2], ['id' => 3]]),
-    static function (array $vehicle, int $window, int $limit, string $stream, array $allowed, ?object $source) use (&$collected): array {
-        $collected[] = [$vehicle['id'], $window, $limit, $stream, $allowed, $source];
-        if ($vehicle['id'] === 2) {
+    static function (Vehicle $vehicle, int $window, int $limit, string $stream, array $allowed, ?object $source) use (&$collected): array {
+        $collected[] = [$vehicle->id, $window, $limit, $stream, $allowed, $source];
+        if ($vehicle->id === 2) {
             throw new RuntimeException('synthetic collection failure');
         }
         return ['fetched' => 2, 'inserted' => 1, 'queued' => 1, 'rejected' => 1, 'skipped' => 0];
     },
-    static fn(array $vehicle): object => (object) ['vehicle' => $vehicle['id']],
+    static fn(Vehicle $vehicle): object => (object) ['vehicle' => $vehicle->id],
     static function (string $channel, array $context) use (&$warnings): void {
         $warnings[] = [$channel, $context];
     },
@@ -83,9 +91,9 @@ if ($bucketResult !== [
 $eventCalls = [];
 $eventCycle = new \Latra\Application\Collection\CollectRelayEventCycle(
     new RuntimeUseCaseRepository([], [['id' => 11], ['id' => 12]], [3, 5]),
-    static function (array $vehicle, int $window, int $limit, string $stream, array $allowed) use (&$eventCalls): array {
-        $eventCalls[] = [$vehicle['id'], $window, $limit, $stream, $allowed];
-        if ($vehicle['id'] === 12) {
+    static function (Vehicle $vehicle, int $window, int $limit, string $stream, array $allowed) use (&$eventCalls): array {
+        $eventCalls[] = [$vehicle->id, $window, $limit, $stream, $allowed];
+        if ($vehicle->id === 12) {
             throw new RuntimeException('synthetic event failure');
         }
         return ['fetched' => 4, 'inserted' => 2];
